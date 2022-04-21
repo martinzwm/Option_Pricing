@@ -1,16 +1,18 @@
 import numpy as np
+import scipy.sparse
 import matplotlib.pyplot as plt
 from mpl_toolkits import mplot3d
 
 class LSM(object):
-    def __init__(self, option_type, S0, strike, T, M, r, sigma, div):
+    def __init__(self, option_type, S0, strike, T, M, N, r, sigma, div):
         """
             Input:
                 option_type [string]: type of option (i.e. American, European, Asian)
                 S0 [float]: current value of stock
                 strike [float]: strike price
                 T [float]: expiration date
-                M [int]: number of mesh grid in time domain
+                M [int]: number of mesh grid in number of states (the starting price). 
+                N [int]: number of mesh grid in time domain
                 r [float]: riskfree rate (i.e. similar to discount factor)
                 div [float]: dividend yield
         """
@@ -24,14 +26,20 @@ class LSM(object):
         self.r = r
         self.sigma = sigma
         self.div = div
-        self.N = T # we can always change that later 
-        self.dt = 1 / T
+        self.N = N # we can always change that later 
+        self.dt = T / N
+        
         if option_type == "European":
             self.S_min = 0
-            self.S_max = 8 * sigma * np.sqrt(T)
+            self.S_max = strike * np.exp(8*sigma*np.sqrt(T))
             self.dS = (self.S_max - self.S_min) / M
             self.S_arr = np.linspace(self.S_min, self.S_max, M + 1) # array of stock prices
             self.t = np.linspace(0, T, self.N + 1) # array of time scales
+            a, b, c = self.compute_abc()
+            self.a = a
+            self.b = b
+            self.c = c
+            self.Lambda = self.compute_lambda(a, b, c)
         self.v = np.empty((self.N + 1, self.M + 1))
         self.init_v()
 
@@ -43,7 +51,7 @@ class LSM(object):
             V(1, S) = max(S - K, 0) (final boundary condition)
         """
         self.v[:, 0] = 0 # Bottom boundary condition. 
-        self.v[:, -1] = self.S_max - np.exp(-self.r * (1 - self.t/self.T)) * self.strike # Top boundary condition. 
+        self.v[:, -1] = self.S_max - np.exp(-self.r * (self.T - self.t)) * self.strike # Top boundary condition. 
         self.v[-1, :] = np.maximum(0, self.S_arr - self.strike) # Final boundary condition.
 
     def get_first_order(self, t):
@@ -71,10 +79,32 @@ class LSM(object):
         term1 = r * S_ * first_ord
         rV = r * self.v[t, 1 : -1]
         # The algorithm includes the "W" term, but it looks like we already included that in our computation of the first and second order terms. 
-        W = np.zeros(self.M - 1)
-        W[0] = -self.sigma**2 * (S_[0] ** 2)/(2 * self.dS**2 ) + r*self.S_arr[0] / (2 * self.dS)
-        W[-1] = -self.sigma**2 * (S_[-1]**2) /(2* self.dS**2 ) - r*self.S_arr[-1] /(2 * self.dS)
-        self.v[t - 1, 1 : -1] = self.v[t, 1:-1] - self.dt * (term2 + term1 - rV + W)
+        #W = np.zeros(self.M - 1)
+        #W[0] = -self.sigma**2 * (S_[0] ** 2)/(2 * self.dS**2 ) +  r*self.S_arr[0] / (2 * self.dS)
+        #W[-1] = -self.sigma**2 * (S_[-1]**2) /(2* self.dS**2 ) -  r*self.S_arr[-1] /(2 * self.dS)
+        #self.v[t - 1, 1 : -1] = self.v[t, 1:-1] - self.dt * (term2 + term1 - rV) # include W?
+        identity = scipy.sparse.identity(self.M - 1)
+        W = self.compute_W(self.a, self.b, self.c,self.v[t,0], self.v[t,-1])
+        self.v[t - 1, 1 : -1] = (identity - self.Lambda * self.dt).dot( self.v[t, 1: -1] ) - W * self.dt
+        # from IPython import embed; embed()
+
+    # Anzo says: I hate to blindly copy people's code but then my code above has myterious bug so I've no choice LOL 
+    def compute_abc(self):
+        S_ = self.S_arr[1:-1]
+        a = -self.sigma**2 * S_ ** 2 / (2 * self.dS**2 ) + self.r * S_ / (2 * self.dS)
+        b = self.r + self.sigma ** 2 * S_ ** 2 / (self.dS**2)
+        c = -self.sigma**2 * S_ ** 2 / (2 * self.dS**2 ) - self.r * S_ / (2 * self.dS)
+        return a,b,c
+
+    def compute_lambda(self, a,b,c):
+        return scipy.sparse.diags( [a[1:],b,c[:-1]],offsets=[-1,0,1])
+
+    def compute_W(self, a,b,c, V0, VM): 
+        M = len(b)+1
+        W = np.zeros(M-1)
+        W[0] = a[0]*V0 
+        W[-1] = c[-1]*VM 
+        return W
 
 
     def simulate(self):
@@ -90,16 +120,19 @@ class LSM(object):
 # Make sure we're doing it right. 
 if __name__ == "__main__":
     option_type = "European"
-    S0 = 15.0
-    strike = 3.0
-    T = 10
-    M = 100000
+    S0 = 36
+    strike = 40
+    T = 1
+    N = 50
+    M = 200
     r = 0.06
-    sigma = 2.00
+    sigma = 0.2
     div = 0.1
-    my_lsm = LSM(option_type, S0, strike, T, M, r, sigma, div)
+    my_lsm = LSM(option_type, S0, strike, T, M, N, r, sigma, div)
     v, t, s = my_lsm.simulate()
     print(v.shape, t.shape, s.shape)
+    from IPython import embed; embed()
+    print()
     #fig = plt.figure()
     #ax = plt.axes(projection='3d')
     #ax.contour3D(s.squeeze(), t.squeeze(), v)
