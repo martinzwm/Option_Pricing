@@ -1,3 +1,7 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits import mplot3d
+
 class LSM(object):
     def __init__(self, option_type, S0, strike, T, M, r, sigma, div):
         """
@@ -21,7 +25,7 @@ class LSM(object):
         self.sigma = sigma
         self.div = div
         self.N = T # we can always change that later 
-        self.dt = T / N
+        self.dt = 1 / T
         if option_type == "European":
             self.S_min = 0
             self.S_max = 8 * sigma * np.sqrt(T)
@@ -39,8 +43,8 @@ class LSM(object):
             V(1, S) = max(S - K, 0) (final boundary condition)
         """
         self.v[:, 0] = 0 # Bottom boundary condition. 
-        self.v[:, -1] = self.S_max - np.exp(-self.r * (1 - self.t)) * K # Top boundary condition. 
-        self.v[-1, :] = np.max(0, self.S_arr - self.strike) # Final boundary condition.
+        self.v[:, -1] = self.S_max - np.exp(-self.r * (1 - self.t/self.T)) * self.strike # Top boundary condition. 
+        self.v[-1, :] = np.maximum(0, self.S_arr - self.strike) # Final boundary condition.
 
     def get_first_order(self, t):
         # Ignoring the two boundaries, for now. 
@@ -59,17 +63,19 @@ class LSM(object):
             Thus this motivates the following: 
             v_{t-1} = v_t - 1/2 * (sigma**2) * (S**2) * V_SS - r * S * V_S + r * V
         """
-        first_ord = self.get_first_order(self, t)
-        second_ord = self.get_second_order(self, t)
+        first_ord = self.get_first_order(t)
+        second_ord = self.get_second_order(t)
         S_ = self.S_arr[1 : -1]
         # Term1 = first order term, term2 = second order term
         term2 = (self.sigma ** 2) * (S_ ** 2) * second_ord / 2
         term1 = r * S_ * first_ord
-        rV = r * self.v[1 : -1]
+        rV = r * self.v[t, 1 : -1]
         # The algorithm includes the "W" term, but it looks like we already included that in our computation of the first and second order terms. 
         W = np.zeros(self.M - 1)
-        W[0] = -self.sigma**2 * S[0]**2/(2* self.dS**2 ) + r*self.S[0]/(2*dS)
-        self.v[t - 1, 1 : -1] = self.v[1, i:-1] - self.dt * (term2 + term1 - rV) 
+        W[0] = -self.sigma**2 * (S_[0] ** 2)/(2 * self.dS**2 ) + r*self.S_arr[0] / (2 * self.dS)
+        W[-1] = -self.sigma**2 * (S_[-1]**2) /(2* self.dS**2 ) - r*self.S_arr[-1] /(2 * self.dS)
+        self.v[t - 1, 1 : -1] = self.v[t, 1:-1] - self.dt * (term2 + term1 - rV + W)
+
 
     def simulate(self):
         """ Given current price, strike, T and other parameters of the option, find its valuation by solving PDE
@@ -79,4 +85,23 @@ class LSM(object):
         """
         for i in range(self.N, 0, -1):
             self.backward_step(i)
-        return self.v, self.t, self.S
+        return self.v, self.t, self.S_arr
+
+# Make sure we're doing it right. 
+if __name__ == "__main__":
+    option_type = "European"
+    S0 = 15.0
+    strike = 3.0
+    T = 10
+    M = 100000
+    r = 0.06
+    sigma = 2.00
+    div = 0.1
+    my_lsm = LSM(option_type, S0, strike, T, M, r, sigma, div)
+    v, t, s = my_lsm.simulate()
+    print(v.shape, t.shape, s.shape)
+    #fig = plt.figure()
+    #ax = plt.axes(projection='3d')
+    #ax.contour3D(s.squeeze(), t.squeeze(), v)
+    #plt.savefig('fd.jpg')
+    #plt.clf()
