@@ -57,10 +57,12 @@ class DiscreteBS():
         self.T = T # time to marutiry, in years 
         self.num_steps = num_steps # number of time steps
         self.num_paths = num_paths # number of MC paths, also N_MC in some notation
-        self.risk_lambda = risk_lambda
+        self.risk_lambda = risk_lambda # risk aversion. 
+        self.stock_type = "European"
+        self.reg_param = 0.001
 
         self.dt = self.T / self.num_steps
-        # Discount factor. 
+        # Discount factor: the "annual" inflation is r and we consider each timestep as 1/num_steps
         self.gamma = np.exp(-r * self.dt)
         # Stock prices. 
         self.S = np.empty((self.num_paths, self.num_steps + 1))
@@ -68,17 +70,15 @@ class DiscreteBS():
         # Initialize half of the paths with stock prices (1+-0.5) s0
         # The other half start with s0
         half_paths = int(num_paths / 2)
-        self.S[:, 0] = S0 * np.ones(num_paths, 'float')
         self.options = np.empty((self.num_paths, self.num_steps + 1))
         self.intrinsic = np.empty((self.num_paths, self.num_steps + 1))
 
-        # Cash position values. 
-        self.positions = np.zeros((self.num_paths, self.num_steps + 1))
-        self.opt_hedge = np.empty((self.num_paths, self.num_steps + 1))
-        self.pi = np.empty((self.num_paths + 1, self.num_steps + 1))
-        self.pi_hat = np.empty((self.num_paths + 1, self.num_steps + 1))
-        self.rewards = np.empty((self.num_paths + 1, self.num_steps + 1))
-        self.Q = np.empty((self.num_paths + 1, self.num_steps + 1))
+        self.positions = np.zeros((self.num_paths, self.num_steps + 1)) # cash position
+        self.opt_hedge = np.empty((self.num_paths, self.num_steps + 1)) # optimal hedge. 
+        self.pi = np.empty((self.num_paths, self.num_steps + 1)) # Portfolio value. 
+        self.pi_hat = np.empty((self.num_paths, self.num_steps + 1)) # Portfolio, de-meaned. 
+        self.rewards = np.empty((self.num_paths, self.num_steps + 1)) # Reward function. 
+        self.Q = np.empty((self.num_paths, self.num_steps + 1)) # Q function. 
 
         self.states = None
         self.features = None
@@ -92,22 +92,32 @@ class DiscreteBS():
 
     # Get the temporal difference delta_S_hat and the states
     def update_states(self, seed = 42):
+        self.S[:, 0] = self.S0 * np.ones(num_paths, 'float')
         np.random.seed(seed)
-        Z = np.random.normal(0, 1, size = (self.num_steps + 1, self.num_paths)).T
-        Z1 = np.random.normal(0, 1, size = (self.num_paths, self.num_steps + 1))
+        #Z = np.random.normal(0, 1, size = (self.num_steps + 1, self.num_paths)).T
+        Z = np.random.randn(self.num_paths, self.num_steps)
+        #Z1 = np.random.normal(0, 1, size = (self.num_paths, self.num_steps + 1))
 
+        # Here, the dynamics is 
+        # S_{t+1} = S_t exp((mu-sigma**2/2)dt + sigma sqrt(dt) Z)
+        # Repeat this for num_paths times. 
         for step in range(self.num_steps):
-            exp_term = np.exp((self.mu - (self.sigma ** 2) / 2) * self.dt + (self.sigma * np.sqrt(self.dt) * Z[:, step + 1]))
+            exp_term = np.exp((self.mu - (self.sigma ** 2) / 2) * self.dt + (self.sigma * np.sqrt(self.dt) * Z[:, step]))
             self.S[:, step + 1] = self.S[:, step] * exp_term
 
+        # Here, dS_t = S_{t+1} - exp(gamma) S_t
         self.delta_S = self.S[:, 1:] - np.exp(self.r * self.dt) * self.S[:, :self.num_steps]
         self.delta_S_hat = np.apply_along_axis(lambda x: x - np.mean(x), axis = 0, arr = self.delta_S)
 
         # Now, determine the states. 
+        # This is given by X_t = -(mu - sigma**2/2) t dt + log(S_t)
         self.states = - (self.mu - self.sigma ** 2 / 2) * np.arange(self.num_steps + 1) * self.dt + np.log(self.S)
         
     # Here we generate our paths. 
-    def gen_paths(self, num_basis):
+    # To do this, we need to get the states and from those, get the basis functions using spline. 
+    # This gives us the data matrices (data_mat in coursera, but here we just use self.feature). 
+    # This can be changed to match how we actually generate the basis; for now leave it as it is to make sure the code matches the original repo. 
+    def gen_basis(self, num_basis):
         # Get the feature vectors. 
         states_min = np.min(self.states)
         states_max = np.max(self.states)
@@ -141,6 +151,7 @@ class DiscreteBS():
         X_mat = self.features[t]
         num_basis_funcs = X_mat.shape[1]
         C_mat = np.dot(X_mat.T, X_mat) + self.reg_param * np.eye(num_basis_funcs)
+        return C_mat
 
     def get_D(self, t, Q):
         X_mat = self.features[t]
@@ -187,92 +198,46 @@ class DiscreteBS():
         return optionVal, delta, optionValVar
 
     # Terminal payoff of stock price and K: max(K - st_pr, 0)
+    # Here's where the European characteristic comes in: only the last part of the stocks matter. 
+    # For American, we can exercise at each step. 
     def compute_pi(self):
-        self.pi[:, -1] = s[:, -1].apply(lambda x: max(K - x, 0))
+        self.pi[:, -1] = np.maximum(self.strike - self.S[:, -1], 0)
+        # self.pi[:, -1] = self.S[:, -1].apply(lambda x: max(self.strike - x, 0))
         self.pi_hat[:, -1] = self.pi[:, -1] - np.mean(self.pi[:, -1])
         self.opt_hedge[:, -1] = 0
         for t in range(self.num_steps - 1, -1, -1):
             A_mat = self.get_A(t) # reg_param?
-            B_vec = self.get_B(t, self.pi_hat[:, t + 1]
+            B_vec = self.get_B(t, self.pi_hat[:, t + 1])
             phi = np.dot(np.linalg.inv(A_mat), B_vec)
             self.opt_hedge[:, t] = np.dot(self.features[t], phi)
-            self.pi[:, t] = self.gamma * (self.pi[:, t + 1] - self.opt_hedge[:, t] - self.delta_S[:, t])
+            val_hold = self.gamma * (self.pi[:, t + 1] - self.opt_hedge[:, t] * self.delta_S[:, t])
+            if self.stock_type == "European":
+                self.pi[:, t] = val_hold
+            elif self.stock_type == "American":
+                val_exercise = 0 #TODO
+                self.pi[:, t] = np.maximum(val_hold, val_exercise)
             self.pi_hat[:, t] = self.pi[:, t] - np.mean(self.pi[:, t])
 
     def get_rewards(self):
-        self.rewards[:, -1] - self.risk_lambda * np.var(self.pi[:, -1])
+        self.rewards[:, -1] = -self.risk_lambda * np.var(self.pi[:, -1])
         for t in range(self.num_steps):
-            self.rewards[1:, t] = self.gamma * self.opt_hedge[1:, t] * self.delta_S[1:, t] - self.risk_lambda * np.var(self.pi[1:, t])
+            self.rewards[:, t] = self.gamma * self.opt_hedge[:, t] * self.delta_S[:, t] - self.risk_lambda * np.var(self.pi[:, t])
 
-    # Q-Learning, but only for European options. 
-    def q_learn(self):
+    # Q-Learning helper, but only for European options. 
+    def qlearn_helper(self):
         self.Q[:, -1] = -self.pi[:, -1] - self.risk_lambda * np.var(self.pi[:, -1])
         for t in range(self.num_steps - 1, -1, -1):
             C_mat = self.get_C(t)
-            D_vec = self.get_D(t, Q)
+            D_vec = self.get_D(t, self.Q)
             omega = np.dot(np.linalg.inv(C_mat), D_vec)
             self.Q[:, t] = np.dot(self.features[t], omega)
 
-    def visualize(self):
-        # plot 10 paths
-        step_size = self.N_MC // 10
-        idx_plot = np.arange(step_size, self.N_MC, step_size)
-        plt.plot(idx_plot, self.S[idx_plot])
-        plt.xlabel('Time Steps')
-        plt.title('Stock Price Sample Paths')
-        plt.show()
-        
-        plt.plot(idx_plot, self.X[idx_plot])
-        plt.xlabel('Time Steps')
-        plt.ylabel('State Variable')
-        plt.show() 
-
-class BLAH():
-    def __init__(self, S0, mu, sigma, r, M, N, T, N_MC):
-        self.S0 = S0
-        self.mu = mu
-        self.sigma = sigma # volatility
-        self.r = r # risk free rate
-        self.T = T # Maturity
-        self.M = M # Number of states we wanna discretize
-        self.N = N # number of mesh grid in time domain
-        self.dt = T / N # Written as delta_t in the original file. 
-        self.N_MC = N_MC # number of paths
-        starttime = time.time()
-        np.random.seed(42) # Fix random seed
-        # stock price
-        self.S = np.empty((N_MC + 1, N + 1))
-        self.S[:,0] = S0
-    
-        # standard normal random numbers
-        RN = np.random.randn(N_MC, T)
-    
-        for t in range(1, N + 1):
-            # How prices move???
-            self.S[:,t] = self.S[:,t - 1] * np.exp((mu - 1/2 * sigma**2) * self.dt + sigma * np.sqrt(self.dt) * RN[:,t])
-        
-        delta_S = S[:, 1:] - np.exp(r * self.dt) * S[:, 0:T - 1]
-        # 0-meaned version. 
-        delta_S_hat = delta_S.apply(lambda x: x - np.mean(x), axis=0)
-        
-        # state variable
-        self.states = - (mu - 1/2 * sigma**2) * np.arange(self.N + 1) * self.dt + np.log(self.S)   # delta_t here is due to their conventions
-        
-        endtime = time.time()
-        print('\nTime Cost:', endtime - starttime, 'seconds')
-
-
-    def get_C(self, t, data_mat, reg_param):
-        X_mat = data_mat[t]
-        num_basis_func = X_mat.shape[1]
-        C_mat = np.dot(X_mat.T, X_mat) + reg_param * np.eye(num_basis_func)
-        return C_mat
-
-    def get_D(self, t, Q, R, data_mat, gamma):
-        X_mat = data_mat[t]
-        D_vec = np.dot(X_mat.T, R[:, t]) + gamma * Q[:, t + 1]
-        return D_vec
-
+    # Now for the real Q Learning. 
+    def qlearn(self):
+        self.compute_pi() # Compute the portfolio val, which also include computing the A and B matrices. 
+        self.get_rewards() # the R matrix. 
+        self.qlearn_helper()
+        return -self.Q
 
 if __name__ == "__main__":
     # Okay try to make it consistent, see if we can replicate. 
@@ -281,30 +246,29 @@ if __name__ == "__main__":
     # def __init__(self, S0, strike, mu, sigma, r, T, num_steps, num_paths):
     strike = 100
     S0 = 100      # initial stock price
-    mu = 0.07     # drift
-    sigma = 0.4  # volatility
-    r = 0.05      # risk-free rate
+    mu = 0.05     # drift
+    sigma = 0.15  # volatility
+    r = 0.03      # risk-free rate
     risk_lambda = 0.001
     T = 1         # maturity
-    num_paths = 500
-    num_periods = 6
-    hMC = DiscreteBS(S0, strike, mu, sigma, r, T, num_periods, num_paths)
-    hMC.gen_paths(12)
-    print(np.min(hMC.states))
-    print(np.max(hMC.states))
-    hMC.seed_intrinsic()
-    option_val, delta, option_val_variance = hMC.roll_backward()
-    bs_call_value = bs_put(0, S0, K=strike, r=r, sigma=sigma, T=T)
-    print('Option value = ', option_val)
-    print('Option value variance = ', option_val_variance)
-    print('Option delta = ', delta)
-    print('BS value', bs_call_value)
+    num_paths = 100
+    num_periods = 24
+    hMC = DiscreteBS(S0, strike, mu, sigma, r, T, num_periods, num_paths, risk_lambda)
+    hMC.gen_basis(12)
+    C_QLBS = hMC.qlearn()
+    step_size = num_paths // 10
+    idx_plot = np.arange(step_size, num_paths, step_size)
+    for idx in idx_plot:
+        plt.plot(C_QLBS[idx, :])
+    plt.xlabel('Time steps')
+    plt.title('QLBS Option Price')
+    plt.savefig('qlbs.png')
+    plt.clf()
+    #hMC.seed_intrinsic()
+    #option_val, delta, option_val_variance = hMC.roll_backward()
+    #bs_call_value = bs_put(0, S0, K=strike, r=r, sigma=sigma, T=T)
+    #print('Option value = ', option_val)
+    #print('Option value variance = ', option_val_variance)
+    #print('Option delta = ', delta)
+    #print('BS value', bs_call_value)
 
-    t = hMC.num_steps - 1
-    piNext = hMC.positions[:, t+1] + 0.1 * hMC.S[:, t+1]
-    pi_hat = piNext - np.mean(piNext)
-
-    A_mat = hMC.get_A(t)
-    B_vec = hMC.get_B(t, pi_hat)
-    phi = np.dot(np.linalg.inv(A_mat), B_vec)
-    opt_hedge = np.dot(hMC.features[t, :, :], phi)
