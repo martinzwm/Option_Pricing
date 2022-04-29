@@ -58,7 +58,8 @@ class DiscreteBS():
         self.num_steps = num_steps # number of time steps
         self.num_paths = num_paths # number of MC paths, also N_MC in some notation
         self.risk_lambda = risk_lambda # risk aversion. 
-        self.stock_type = "European"
+        self.stock_type = "American"
+        self.option_type = "put"
         self.reg_param = 0.001
 
         self.dt = self.T / self.num_steps
@@ -130,7 +131,11 @@ class DiscreteBS():
             self.features[i] = np.array([ basis(el) for el in x ])
         return self.features
 
-    # As suggested by the notebook, here we just define the matrices A, B, C, 
+    # Here, we start the code to calculate the optimal Q. 
+    # In QLBS, the optimal action is given by a(X_t) = sum phi * Phi and Q given by sum omega * Phi
+    # Where Phi is the feature vector (generated as basis). 
+    # Now, Phi is A^{-1}B, A = sum Phi^k sum Phi^k.T dS**2, B = sum Phi^k [with all the pi terms]
+    # omega is C^{-1}D, C = sum Phi^k sum Phi^k.T, D = sum Phi^k (reward + gamma Q(state, a))
     def get_A(self, t, reg_param=1e-3):
         X_mat = self.features[t]
         num_basis_funcs = X_mat.shape[1]
@@ -201,7 +206,10 @@ class DiscreteBS():
     # Here's where the European characteristic comes in: only the last part of the stocks matter. 
     # For American, we can exercise at each step. 
     def compute_pi(self):
-        self.pi[:, -1] = np.maximum(self.strike - self.S[:, -1], 0)
+        if self.option_type == "put":
+            self.pi[:, -1] = np.maximum(self.strike - self.S[:, -1], 0)
+        else:
+            self.pi[:, -1] = np.maximum(self.S[:, -1] - self.strike, 0)
         # self.pi[:, -1] = self.S[:, -1].apply(lambda x: max(self.strike - x, 0))
         self.pi_hat[:, -1] = self.pi[:, -1] - np.mean(self.pi[:, -1])
         self.opt_hedge[:, -1] = 0
@@ -214,7 +222,7 @@ class DiscreteBS():
             if self.stock_type == "European":
                 self.pi[:, t] = val_hold
             elif self.stock_type == "American":
-                val_exercise = 0 #TODO
+                val_exercise =  np.maximum(self.strike - self.S[:, t], 0) if self.option_type == "put" else np.maximum(self.S[:, t] - self.strike, 0)
                 self.pi[:, t] = np.maximum(val_hold, val_exercise)
             self.pi_hat[:, t] = self.pi[:, t] - np.mean(self.pi[:, t])
 
