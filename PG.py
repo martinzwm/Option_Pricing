@@ -22,6 +22,8 @@ class PGNetwork(nn.Module):
             modules = [nn.Linear(in_dim, hidden_dim), nn.ReLU()]
             for i in range(num_layer - 1):
                 modules.append(nn.Linear(hidden_dim, hidden_dim))
+                if i % 2 == 0:
+                    modules.append(nn.BatchNorm1d(hidden_dim))
                 modules.append(nn.ReLU())
             modules.append(nn.Linear(hidden_dim, out_dim))
             self.net = nn.Sequential(*modules)
@@ -34,7 +36,10 @@ class PGNetwork(nn.Module):
     def forward(self, observations):
         B, N = observations.size()
         # B should really be 1. 
-        x = self.net(observations)
+        try:
+            x = self.net(observations)
+        except:
+            from IPython import embed; embed()
         return Categorical(logits = F.log_softmax(x, dim = 1))
 
 class ValueNetwork(nn.Module):
@@ -62,6 +67,8 @@ def discounted_returns(rewards, gamma, device = None):
 
 def update_parameters(optimizer, model, rewards, log_probs, gamma,
                       values = None, temporal = False, device = None):
+    model.train()
+    optimizer.zero_grad()
     policy_loss = []
     returns = discounted_returns(rewards, gamma, device)
     eps = np.finfo(np.float32).eps.item()
@@ -82,7 +89,6 @@ def update_parameters(optimizer, model, rewards, log_probs, gamma,
     else:
         loss = policy_loss
     # loss = Variable(loss, requires_grad = True)
-    optimizer.zero_grad()
     loss.backward()
     optimizer.step()
 
@@ -98,25 +104,24 @@ def rollout(model, traj, strike, dt, vmodel=None, device=None):
             traj: B x L, B = # number of trajectory (a.k.a. batch size), L = trajectory length
     """
     # from IPython import embed; embed()
-    B, L = traj.size()
+    B, L, _ = traj.size()
     # assert(B == 1), "batch size of > 1 not supported yet."
     actions = torch.zeros((B, L), device = device, dtype=torch.int)
-    rewards = torch.zeros((B, L), device=device)
-    log_probs = torch.zeros((B, L), device=device)
-    values = torch.zeros((B, L), device=device)
-    ep_reward = 0
+    rewards = torch.zeros((B, L), device = device)
+    log_probs = torch.zeros((B, L), device = device)
+    values = torch.zeros((B, L), device = device)
+    ep_reward = torch.zeros((B), device = device)
     exercised = torch.zeros((B), device = device)
-    reward_list = reward_func(traj, strike)
+    reward_list = reward_func(traj[:, :, 0], strike)
     for T in range(L):
-        dt_vec = torch.full(torch.Size([B]), (L - T) * dt)
-        state = torch.stack([traj[:, T], dt_vec], dim = 1).float()
+        state = traj[:, T].float() # B x 2
         dist = model(state)
         action = dist.sample() # Length B
         log_prob = dist.log_prob(action) # Length B
         # If we've already exercised then the action no longer matters. 
         action = torch.logical_and(action, torch.logical_not(exercised))
         exercised = torch.logical_or(action, exercised)
-        if vmodel: # We'll fix this later. , TODO
+        if vmodel: # We'll fix this later.
             value = vmodel(x)
             values[:, T] = value
         
@@ -124,6 +129,7 @@ def rollout(model, traj, strike, dt, vmodel=None, device=None):
         if T < L - 1:
             reward = (1 - exercised.float()) * reward_list[:, T]
             rewards[:, T] = reward
+            ep_reward += reward
         actions[:, T] = action
         log_probs[:, T] = log_prob
     #print(actions)
@@ -133,21 +139,29 @@ def rollout(model, traj, strike, dt, vmodel=None, device=None):
 def data_load_pg(traj, train_test_split=0.8):
     """ 
         Args: 
-            data: trajcetory
+            data: trajcetory, np array size N x L
+            T: time horizon. 
+        Returns:
+            train_set: N1 x L x 2
+            test_set: N2 x L x 2
     """
+    # Idea is to secretly inject dt into the vector. 
+    N, L = traj.shape
+    dt_vec = np.flip(np.arange(L) / L, axis = 0)[np.newaxis, :]
+    traj_full = np.stack([traj, np.repeat(dt_vec, N, 0)], axis = 2)
     train_size = int(np.round(train_test_split * traj.shape[0]))
 
-    train_set, test_set = traj[:train_size], traj[train_size:]
+    train_set, test_set = traj_full[:train_size], traj_full[train_size:]
 
     return train_set, test_set
 
-def train():
+def pg_train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device == torch.device('cuda'):
         batch_size = 10
     else:
         batch_size = 10
-    X, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 10, 100, BrownianMotion
+    X, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 1002, 100, BrownianMotion
     strike = 40
     transition_model = BrownianMotion(S0, r, sigma, T, M, N)
     data = transition_model.simulate()
@@ -169,7 +183,7 @@ def train():
         num_workers = 1,
         shuffle = True
     )
-    LR = 1e-3
+    LR = 1e-2
     USE_VALUE_NETWORK = False
     TEMPORAL = False
     model = PGNetwork(in_dim = 2, out_dim = 2)
@@ -184,11 +198,15 @@ def train():
         for item in train_loader:
             actions, rewards, log_probs, values, ep_reward = rollout(
                 model, item, strike, dt, vmodel=vmodel if USE_VALUE_NETWORK else None, device=device)
+            print(torch.mean(ep_reward))
 
             update_parameters(optimizer, model, rewards, log_probs, gamma, 
                               values = values if USE_VALUE_NETWORK else None, 
                               temporal = TEMPORAL, device = device)
+            #blah
             # from IPython import embed; embed()
 
+# def evaluate(model, vmodel = None, 
+
 if __name__ == "__main__":
-    train()
+    pg_train()
