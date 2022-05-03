@@ -1,7 +1,5 @@
 from transition import BrownianMotion
-import numpy as np
-import torch
-from torch.utils.data import Dataset, DataLoader
+from utility import *
 
 import torch
 import torch.nn as nn
@@ -67,95 +65,6 @@ class LSTM(nn.Module):
         return out
 
 
-# Data generator
-def data_gen(X, S0, r, sigma, T, M, N, transition):
-    """ Generate trajectory data
-        Input:
-            X, S0, r, sigma, T [scalar]: specifies the option
-            M, N [scalar]: number of time steps, number of trajectories
-            transition [class]: a transition function
-    """
-    brownian = transition(S0, r, sigma, T, M, N)
-    data = []
-    trajs = brownian.simulate()
-
-    for i in range(trajs.shape[1]):
-        traj = trajs[:,i]
-        traj = np.vstack( (np.linspace(0, T*365, M+1), 
-                        traj, 
-                        X*np.ones(M+1), 
-                        r*np.ones(M+1), 
-                        sigma*np.ones(M+1)) )
-        traj = traj.T
-        data.append(traj)
-    
-    data = np.array(data)
-    return data
-
-
-# Dataset
-class SimDataset(Dataset):
-    def __init__(self, data):
-        self.data = data
-
-    def __len__(self):
-        return len(self.data)
-    
-    def __getitem__(self, idx):
-        return self.data[idx]
-
-
-# Dataloader
-def data_load(data, lookback, train_test_split=0.8):
-    """ Prepare LSTM data from a list of trajectories. 
-        Uses load_traj() as a helper function
-    """
-    train_set, test_set = [], []
-    
-    for traj in data:
-        train_set_traj, test_set_traj = traj_load(traj, lookback, train_test_split)
-        train_set.append(train_set_traj)
-        test_set.append(test_set_traj)
-    
-    # Convert to numpy arrays
-    train_set, test_set = np.array(train_set), np.array(test_set)
-    # Convert to torch tensors
-    train_set = torch.from_numpy(train_set).type(torch.Tensor)
-    test_set = torch.from_numpy(test_set).type(torch.Tensor)
-    # Merge the 1st and 2nd dimensions, i.e. model doesn't need to know which trajectory we are on
-    train_set = train_set.view(-1, lookback, train_set.size()[-1])
-    test_set = test_set.view(-1, lookback, test_set.size()[-1])
-    return train_set, test_set
-
-
-def traj_load(traj, lookback, train_test_split=0.8):
-    """ Prepare LSTM data from raw (single) trajectory data.
-        Helper function to load_data()
-        Input:
-            traj [matrix of size M x 6]: M is the number of timesteps; at each time step
-                                         there are 5 state variables and 1 output price
-            lookback [scalar]: number of lookback steps
-            train_test_split [scaler]: ratio of train : test dataset
-        Output:
-            train_set [matrix of size len(traj)*train_test_split x lookback x 5]: training data
-            test_set: analogous to train_set
-    """
-    M = traj.shape[0]
-
-    # Prepare path into LSTM data format
-    data = []
-    for i in range(M - lookback):
-        data.append(traj[i : i + lookback])
-    data = np.array(data)
-    np.random.shuffle(data)
-
-    # Split train and test set
-    train_size = int(np.round(train_test_split * data.shape[0]))
-    train_set = data[:train_size, :, :]
-    test_set = data[train_size:, :, :]
-    return [train_set, test_set]
-
-
 # Training
 def train():
     """ Train the model
@@ -175,12 +84,14 @@ def train():
     # for i in range(len(list(lstm.parameters()))):
     #     print(list(lstm.parameters())[i].size())
 
-    # Generate data
-    X, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 100, 800, BrownianMotion
-    data = data_gen(X, S0, r, sigma, T, M, N, transition)
+    # # Generate data
+    # data = gen_data()
+
+    # Read real data
+    data = read_data()
 
     # Create dataloaders
-    lookback = 20
+    lookback = 5
     train_set, test_set = data_load(data, lookback)
     train_set = SimDataset(train_set)
     test_set = SimDataset(test_set)
@@ -189,13 +100,13 @@ def train():
         train_set,
         batch_size=batch_size,
         num_workers=1,
-        shuffle=True
+        shuffle=False
     )
     test_loader = DataLoader(
         test_set,
         batch_size=batch_size,
         num_workers=1,
-        shuffle=True
+        shuffle=False
     )
 
     # Train parameters

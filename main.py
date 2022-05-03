@@ -1,5 +1,6 @@
 from transition import BrownianMotion
 from LSM import AmericanOptionsLSMC
+from utility import *
 from LSTM import *
 import matplotlib.pyplot as plt
 
@@ -24,7 +25,7 @@ def test_traj_gen():
 
 def test_data_gen():
     X, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 100, 10, BrownianMotion
-    data = data_gen(X, S0, r, sigma, T, M, N, transition)
+    data = gen_traj(X, S0, r, sigma, T, M, N, transition)
     # print(data.shape)
     return data
 
@@ -34,11 +35,11 @@ def test_dataloader():
     """
     # Generate data
     X, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 100, 10, BrownianMotion
-    data = data_gen(X, S0, r, sigma, T, M, N, transition)
+    data = gen_traj(X, S0, r, sigma, T, M, N, transition)
     # Create dataloader
     train_set, test_set = data_load(data, lookback=20)
     print(train_set.size(), test_set.size())
 
 
 if __name__ == "__main__":
-    test_dataloader()
+    test_LSM()
