@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import os
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader
 
@@ -26,6 +27,10 @@ def read_data():
             strike_price = traj_data["strike_price"].values / 1000
             bid = traj_data["best_bid"].values
             
+            # For debugging, remove during actual training
+            if abs(strike_price[0] - stock_price[0]) / stock_price[0] > 0.25:
+                continue
+
             traj_data = np.vstack((days_to_expire, stock_price, riskfree_rate, strike_price, bid))
             traj_data = traj_data.T
             data.append(traj_data)
@@ -133,6 +138,37 @@ def traj_load(traj, lookback):
         data.append(traj[i : i + lookback])
     data = np.array(data)
     return data
+
+
+"""
+Utility functions to load and save torch model checkpoints 
+"""
+def load_checkpoint(net, optimizer=None, step='max', save_dir='checkpoints'):
+    os.makedirs(save_dir, exist_ok=True)
+
+    checkpoints = [x for x in os.listdir(save_dir) if not x.startswith('events')]
+    if step == 'max':
+        step = 0
+        if checkpoints:
+            step, last_checkpoint = max([(int(x.split('.')[0]), x) for x in checkpoints])
+    else:
+        last_checkpoint = str(step) + '.pth'
+    if step:
+        save_path = os.path.join(save_dir, last_checkpoint)
+        state = torch.load(save_path, map_location='cpu')
+        net.load_state_dict(state['net'])
+        if optimizer:
+            optimizer.load_state_dict(state['optimizer'])
+        print('Loaded checkpoint %s' % save_path)
+    return step
+
+def save_checkpoint(net, optimizer, step, save_dir='checkpoints'):
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    save_path = os.path.join(save_dir, str(step) + '.pth')
+
+    torch.save(dict(net=net.state_dict(), optimizer=optimizer.state_dict()), save_path)
+    print('Saved checkpoint %s' % save_path)
 
 
 if __name__ == "__main__":
