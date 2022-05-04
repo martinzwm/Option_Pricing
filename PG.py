@@ -5,6 +5,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
 from torch.distributions import Categorical
+import matplotlib.pyplot as plt
 from transition import BrownianMotion
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import *
@@ -35,7 +36,7 @@ class PGNetwork(nn.Module):
 
     def forward(self, observations):
         B, N = observations.size()
-        # B should really be 1. 
+        # N should really be 2, one for time and . 
         try:
             x = self.net(observations)
         except:
@@ -103,9 +104,7 @@ def rollout(model, traj, strike, dt, vmodel=None, device=None):
             model: the PG model (presumably, no other choice)
             traj: B x L, B = # number of trajectory (a.k.a. batch size), L = trajectory length
     """
-    # from IPython import embed; embed()
     B, L, _ = traj.size()
-    # assert(B == 1), "batch size of > 1 not supported yet."
     actions = torch.zeros((B, L), device = device, dtype=torch.int)
     rewards = torch.zeros((B, L), device = device)
     log_probs = torch.zeros((B, L), device = device)
@@ -158,13 +157,12 @@ def data_load_pg(traj, train_test_split=0.8):
 def pg_train():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device == torch.device('cuda'):
-        batch_size = 10
+        batch_size = 20
     else:
-        batch_size = 10
-    X, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 1002, 100, BrownianMotion
-    strike = 40
+        batch_size = 20
+    strike, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 50, 100, BrownianMotion
     transition_model = BrownianMotion(S0, r, sigma, T, M, N)
-    data = transition_model.simulate()
+    data = np.transpose(transition_model.simulate())
     # TODO: data_load
     train_set, test_set = data_load_pg(data, 0.80)
     train_set = SimDataset(train_set)
@@ -183,7 +181,7 @@ def pg_train():
         num_workers = 1,
         shuffle = True
     )
-    LR = 1e-2
+    LR = 1e-3
     USE_VALUE_NETWORK = False
     TEMPORAL = False
     model = PGNetwork(in_dim = 2, out_dim = 2)
@@ -195,18 +193,56 @@ def pg_train():
         optimizer = optim.Adam(model.parameters(), lr=LR)
     num_epochs = 100 # Change later. 
     for step in tqdm(range(num_epochs)):
+        model.train()
         for item in train_loader:
             actions, rewards, log_probs, values, ep_reward = rollout(
                 model, item, strike, dt, vmodel=vmodel if USE_VALUE_NETWORK else None, device=device)
-            print(torch.mean(ep_reward))
+            # print(torch.mean(ep_reward))
 
             update_parameters(optimizer, model, rewards, log_probs, gamma, 
                               values = values if USE_VALUE_NETWORK else None, 
                               temporal = TEMPORAL, device = device)
-            #blah
-            # from IPython import embed; embed()
+        
+        test_reward = []
+        model.eval()
+        if (step + 1) % 10 == 0:
+            for item in test_loader:
+                actions, rewards, log_probs, values, ep_reward = rollout(
+                    model, item, strike, dt, vmodel=vmodel if USE_VALUE_NETWORK else None, device=device)
+                for rew in ep_reward:
+                    test_reward.append(rew.item())
+            print(sum(test_reward)/len(test_reward))
+            prices = np.linspace(np.min(data), max(strike, S0), 40)
+            dtimes = np.linspace(0, 1, 6)
+            prob_plot(model, prices, dtimes = dtimes, fname = "pg_plot.png") 
+        
 
-# def evaluate(model, vmodel = None, 
+def prob_plot(model, prices, dtimes, fname = None):
+    """
+        Args: 
+            model: PGNet (only one choice)
+            prices: a list of all the prices
+            dtimes: a fixed set of time intervals
+        Returns:
+            a plot
+    """
+    # First need to process first. 
+    model.eval()
+    L = prices.shape[0]
+    for dtime in dtimes: 
+        dtime_vec = np.repeat(dtime, L, 0)
+        state = np.stack([prices, dtime_vec], axis = 1)
+        state_tensor = torch.from_numpy(state).float()
+        dist = model(state_tensor)
+        exercise = torch.tensor([1] * L)
+        probs = torch.exp(dist.log_prob(exercise))
+        probs = probs.cpu().detach().numpy()
+        plt.plot(prices, probs, label = "dt = {:.2f}".format(dtime))
+    if fname == None:
+        fname = 'pg_prob.png'
+    plt.legend()
+    plt.savefig(fname)
+    plt.clf()
 
 if __name__ == "__main__":
     pg_train()
