@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from transition import BrownianMotion
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import *
-from LSTM import data_gen, SimDataset
+from utility import SimDataset
 from tqdm import tqdm
 
 # For now just copy paste the code from the Colab solution (PSet 6)
@@ -39,8 +39,6 @@ class PGNetwork(nn.Module):
         # N should really be 2, one for time and . 
         try:
             x = self.net(observations)
-        except:
-            from IPython import embed; embed()
         return Categorical(logits = F.log_softmax(x, dim = 1))
 
 class ValueNetwork(nn.Module):
@@ -53,9 +51,11 @@ class ValueNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, 1)
         )
+        # TODO: add the Actor-Critic version (pass in the feature vector). 
 
     def forward(self, observation):
-        return self.net(observation)
+        B, L = observation.size()
+        return self.net(observation).view(B)
 
 # Next, compute the discounted returns, same as how we did in PSet 6. 
 def discounted_returns(rewards, gamma, device = None):
@@ -63,7 +63,7 @@ def discounted_returns(rewards, gamma, device = None):
     returns[:, -1] = rewards[:, -1]
     for i in range(rewards.shape[1] - 1, 0, -1):
         r = rewards[:, i - 1]
-        returns[:, i-2] = r + gamma * returns[:, i-1]
+        returns[:, i-1] = r + gamma * returns[:, i]
     return returns
 
 def update_parameters(optimizer, model, rewards, log_probs, gamma,
@@ -74,13 +74,13 @@ def update_parameters(optimizer, model, rewards, log_probs, gamma,
     returns = discounted_returns(rewards, gamma, device)
     eps = np.finfo(np.float32).eps.item()
     discount = torch.zeros_like(rewards, device = device)
-    discount[0] = 1
-    for i in range(1, len(discount)):
-        discount[i] = gamma * discount[i - 1]
+    discount[:, 0] = 1
+    for i in range(1, discount.shape[1]):
+        discount[:, i] = gamma * discount[:, i - 1]
 
     if values != None:
         value_loss = F.smooth_l1_loss(values, returns)
-        returns -= values.detach()
+        returns = returns - values.detach()
     if temporal:
         policy_loss = - torch.sum(log_probs * returns * discount)
     else: 
@@ -93,10 +93,15 @@ def update_parameters(optimizer, model, rewards, log_probs, gamma,
     loss.backward()
     optimizer.step()
 
-def reward_func(traj, strike):
-    ans = torch.clamp(strike - traj, min=0)
+def reward_func(traj, strike, style = None):
+    assert(style in [None, "TD0"])
+    if style is None:
+        reward = torch.clamp(strike - traj, min = 0)
+    else:
+        ans = torch.clamp(strike - traj, min=0)
+        reward = ans[:, 1:] - ans[:, :-1]
     # TODO: change this into some sort of TD(0) algo. 
-    return ans[:, 1:] - ans[:, :-1]
+    return reward
 
 def rollout(model, traj, strike, dt, vmodel=None, device=None):
     """
@@ -111,7 +116,12 @@ def rollout(model, traj, strike, dt, vmodel=None, device=None):
     values = torch.zeros((B, L), device = device)
     ep_reward = torch.zeros((B), device = device)
     exercised = torch.zeros((B), device = device)
-    reward_list = reward_func(traj[:, :, 0], strike)
+    reward_style = None
+    reward_list = reward_func(traj[:, :, 0], strike, reward_style)
+    if reward_style == "TD0":
+        base_val = max(strike - traj[0, 0, 0].item(), 0)
+        ep_reward.fill_(base_val)
+        # ep_reward = torch.full((B), base_val)
     for T in range(L):
         state = traj[:, T].float() # B x 2
         dist = model(state)
@@ -121,14 +131,22 @@ def rollout(model, traj, strike, dt, vmodel=None, device=None):
         action = torch.logical_and(action, torch.logical_not(exercised))
         exercised = torch.logical_or(action, exercised)
         if vmodel: # We'll fix this later.
-            value = vmodel(x)
+            value = vmodel(state)
             values[:, T] = value
         
-        #ep_reward = reward
-        if T < L - 1:
-            reward = (1 - exercised.float()) * reward_list[:, T]
+        if reward_style is None:
+            if T < L - 1:
+                reward = reward_list[:, T] * action.float()
+            else:
+                count = torch.logical_or(action, torch.logical_not(exercised))
+                reward = reward_list[:, T] * count.float()
             rewards[:, T] = reward
             ep_reward += reward
+        else:
+            if T < L - 1:
+                reward = (1 - exercised.float()) * reward_list[:, T]
+                rewards[:, T] = reward
+                ep_reward += reward
         actions[:, T] = action
         log_probs[:, T] = log_prob
     #print(actions)
@@ -160,7 +178,7 @@ def pg_train():
         batch_size = 20
     else:
         batch_size = 20
-    strike, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 50, 100, BrownianMotion
+    strike, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 50, 1000, BrownianMotion
     transition_model = BrownianMotion(S0, r, sigma, T, M, N)
     data = np.transpose(transition_model.simulate())
     # TODO: data_load
@@ -187,7 +205,7 @@ def pg_train():
     model = PGNetwork(in_dim = 2, out_dim = 2)
     gamma = np.exp(-r * dt)
     if USE_VALUE_NETWORK:
-        vmodel = ValueNetwork(env.observation_space.shape[0], 64).to(device)
+        vmodel = ValueNetwork(2, 64).to(device)
         optimizer = optim.Adam(list(model.parameters()) + list(vmodel.parameters()), lr=LR)
     else:
         optimizer = optim.Adam(model.parameters(), lr=LR)
