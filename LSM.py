@@ -1,4 +1,6 @@
 import numpy as np
+from transition import BrownianMotion
+import matplotlib.pyplot as plt
 
 class AmericanOptionsLSMC(object):
     """ Class for American options pricing using Longstaff-Schwartz (2001):
@@ -50,6 +52,8 @@ class AmericanOptionsLSMC(object):
 
         self.time_unit = self.T / float(self.M)
         self.discount = np.exp(-self.r * self.time_unit)
+        self.discount = 0.99
+
 
     @property
     def MCprice_matrix(self, seed=123):
@@ -70,10 +74,19 @@ class AmericanOptionsLSMC(object):
         return payoff
 
     @property
-    def value_vector(self):
-        """Returns the expected value of continuation at each time step and trajectory"""
+    def value_matrix(self):
+        """ Returns the expected value at each time step and trajectory
+            Output:
+                value_matrix [matrix of size M x N, float]: expected value
+                decision_matrix [matrix of size M x N, bool]: decision
+        """
         value_matrix = np.zeros_like(self.MCpayoff)
+        decision_matrix = np.zeros_like(self.MCpayoff)
+
+        # Terminal T
         value_matrix[-1, :] = self.MCpayoff[-1, :]
+        decision_matrix[-1, :] = self.MCpayoff[-1, :] > 0
+
         # Recusion from T-1 to 0 
         for t in range(self.M - 1, -1, -1):
             regression = np.polyfit(self.MCprice_matrix[t, :], value_matrix[t + 1, :] * self.discount, 5)
@@ -81,9 +94,23 @@ class AmericanOptionsLSMC(object):
             value_matrix[t, :] = np.where(self.MCpayoff[t, :] > continuation_value,
                                           self.MCpayoff[t, :],
                                           value_matrix[t + 1, :] * self.discount)
+            decision_matrix[t, :] = np.where(self.MCpayoff[t, :] > continuation_value, True, False)
 
-        return value_matrix[0,:]
+        return value_matrix, decision_matrix
+
 
     @property
-    def price(self): 
-        return np.sum(self.value_vector) / float(self.N)
+    def decision(self):
+        """ Returns the action (i.e. continue or exercise) at each time step and trajectory
+            Information is inferred by comparing self.MCpayoff and self.value_vector
+        """
+        value_exercise = self.MCpayoff
+        value_actual = self.value_vector
+        decision = value_exercise == value_actual
+        return decision
+
+
+    @property
+    def price(self):
+        value, _ = self.value_matrix
+        return np.sum(value[0,:]) / float(self.N)
