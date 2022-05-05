@@ -235,7 +235,7 @@ def data_load_pg(traj, train_test_split=0.8):
 
     return train_set, test_set
 
-def pg_train(TEMPORAL = False, VALUE_NETWORK = False, fname = None):
+def pg_train(config):
     strike = config.strike
     S0 = config.S0
     sigma = config.sigma
@@ -314,7 +314,7 @@ def pg_train(TEMPORAL = False, VALUE_NETWORK = False, fname = None):
             print(sum(test_reward)/len(test_reward))
             prices = np.linspace(np.min(data), np.max(data), 40)
             dtimes = np.linspace(0, 1, 6)
-            prob_plot(model, prices, dtimes = dtimes, fname = fname) 
+            prob_plot(model, prices, dtimes = dtimes, fname = prob_fname) 
         print("Epoch {} done".format(step + 1))
         
 

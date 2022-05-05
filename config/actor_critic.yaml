@@ -9,4 +9,4 @@ LR: 5e-4
 temporal: True
 vmodel: 'actor_critic'
 num_epochs: 500
-prob_fname: 'pg_temporal.png'
+prob_fname: 'pg_ac.png'
