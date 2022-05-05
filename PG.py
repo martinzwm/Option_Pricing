@@ -1,6 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import yaml
+import argparse
+from easydict import EasyDict as edict
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -66,7 +69,7 @@ def discounted_returns(rewards, gamma, device = None):
     returns[:, -1] = rewards[:, -1]
     for i in range(rewards.shape[1] - 1, 0, -1):
         r = rewards[:, i - 1]
-        returns[:, i-1] = r + gamma * returns[:, i]
+        returns[:, i - 1] = r + gamma * returns[:, i]
     return returns
 
 def get_Q(price, payoff, gamma):
@@ -119,6 +122,7 @@ def update_parameters(optimizer, model, rewards, log_probs, gamma,
     loss.backward()
     optimizer.step()
 
+# Note: don't use TD(0) yet. Might be difficult because of the gamma factor. 
 def reward_func(traj, strike, style = None):
     assert(style in [None, "TD0"])
     if style is None:
@@ -129,61 +133,86 @@ def reward_func(traj, strike, style = None):
     # TODO: change this into some sort of TD(0) algo. 
     return reward
 
-def rollout(model, traj, strike, dt, gamma, vmodel=None, device=None):
+# Here, we want to do one step of simulation. 
+# For train, we have the model to act probabilistically. 
+# For test, we compute the _expected_ reward. 
+def rollout(model, traj, strike, dt, gamma, 
+            vmodel=None, mode = "train", device=None):
     """
         Args:
             model: the PG model (presumably, no other choice)
             traj: B x L, B = # number of trajectory (a.k.a. batch size), L = trajectory length
+            strike: the strike price
+            dt: the difference in time (T / M)
+            gamma: discount factor. 
+            vmodel: value network, or simply, "actor critic". 
+            mode: train, or test
+            device
     """
+    assert mode in ["train", "test"], "only train / test mode makes sense here. "
     B, L, _ = traj.size()
     actions = torch.zeros((B, L), device = device, dtype=torch.int)
     rewards = torch.zeros((B, L), device = device)
     log_probs = torch.zeros((B, L), device = device)
     values = torch.zeros((B, L), device = device)
     ep_reward = torch.zeros((B), device = device)
+    # For train, the exercised parameter will just be deterministic (0 or 1). 
+    # For test, this is the probability that we have not exercised yet. 
     exercised = torch.zeros((B), device = device)
     reward_style = None
     reward_list = reward_func(traj[:, :, 0], strike, reward_style)
-    q_all = get_Q(traj[:, :, 0].numpy(), reward_list.numpy(), gamma)
-    q_all = torch.from_numpy(q_all).float()
-    q_state = q_all[:, 0]
+    if vmodel == "actor_critic":
+        q_all = get_Q(traj[:, :, 0].numpy(), reward_list.numpy(), gamma)
+        q_all = torch.from_numpy(q_all).float()
+        q_state = q_all[:, 0]
+    
+    # TD0 part can ignore, for now. 
     if reward_style == "TD0":
         base_val = max(strike - traj[0, 0, 0].item(), 0)
         ep_reward.fill_(base_val)
         # ep_reward = torch.full((B), base_val)
+
     for T in range(L):
         state = traj[:, T].float() # B x 2
         dist = model(state)
-        action = dist.sample() # Length B
-        log_prob = dist.log_prob(action) # Length B
-        # If we've already exercised then the action no longer matters. 
-        action = torch.logical_and(action, torch.logical_not(exercised))
-        exercised = torch.logical_or(action, exercised)
-        if vmodel: # We'll fix this later.
-            #value = vmodel(state)
-            #values[:, T] = value
-            if T < L - 1:
-                q_state = torch.where(exercised, q_state, q_all[:, T + 1])
-            values[:, T] = q_state
-        
-        if reward_style is None:
-            if T < L - 1:
-                reward = reward_list[:, T] * action.float()
-            else:
-                count = torch.logical_or(action, torch.logical_not(exercised))
-                reward = reward_list[:, T] * count.float()
-            rewards[:, T] = reward
-            ep_reward += reward
-        else:
-            if T < L - 1:
-                reward = (1 - exercised.float()) * reward_list[:, T]
+        if mode == "train": 
+            action = dist.sample() # Length B
+            log_prob = dist.log_prob(action) # Length B
+            # If we've already exercised then the action no longer matters. 
+            action = torch.logical_and(action, torch.logical_not(exercised))
+            exercised = torch.logical_or(action, exercised)
+            if vmodel: # We'll fix this later.
+                #value = vmodel(state)
+                #values[:, T] = value
+                if T < L - 1:
+                    q_state = torch.where(exercised, q_state, q_all[:, T + 1])
+                values[:, T] = q_state
+            
+            if reward_style is None:
+                if T < L - 1:
+                    reward = reward_list[:, T] * action.float()
+                else:
+                    count = torch.logical_or(action, torch.logical_not(exercised))
+                    reward = reward_list[:, T] * count.float()
                 rewards[:, T] = reward
                 ep_reward += reward
-        actions[:, T] = action
-        log_probs[:, T] = log_prob
-    #print(actions)
-    #print(rewards)
-    # from IPython import embed; embed()
+
+            else:
+                # TD(0) case. 
+                if T < L - 1:
+                    reward = (1 - exercised.float()) * reward_list[:, T]
+                    rewards[:, T] = reward
+                    ep_reward += reward
+            actions[:, T] = action
+            log_probs[:, T] = log_prob
+        else:
+            # Test mode. 
+            ones = torch.ones((B), device = device)
+            cond_prob = torch.exp(dist.log_prob(ones))
+            real_prob = cond_prob * (1 - exercised)
+            ep_reward += reward_list[:, T] * real_prob * (gamma ** T)
+            exercised += real_prob
+
     return actions, rewards, log_probs, values, ep_reward
 
 def data_load_pg(traj, train_test_split=0.8):
@@ -205,29 +234,41 @@ def data_load_pg(traj, train_test_split=0.8):
 
     return train_set, test_set
 
-def pg_train(TEMPORAL = False, USE_VALUE_NETWORK = False, fname = None):
-    strike, S0, r, sigma, T, M, N, transition = 40, 36, 0.06, 0.2, 1, 50, 1000, BrownianMotion
+def pg_train(TEMPORAL = False, VALUE_NETWORK = False, fname = None):
+    strike = config.strike
+    S0 = config.S0
+    sigma = config.sigma
+    r = config.r
+    T = config.T
+    M = config.M
+    N = config.N
+    transition = BrownianMotion
     div = 0
+    LR = float(config.LR)
     transition_model = BrownianMotion(S0, r, sigma, T, M, N)
     data = np.transpose(transition_model.simulate())
-    lsm = AmericanOptionsLSMC('put', S0, strike, T, M, r, div, sigma, N, transition)
+    dt = T / M
+    temporal = config.temporal
+    vmodel = config.vmodel if "vmodel" in config else None
+    prob_fname = config.prob_fname
+    num_epochs = config.num_epochs
+    # lsm = AmericanOptionsLSMC('put', S0, strike, T, M, r, div, sigma, N, transition)
     torch.manual_seed(123)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     if device == torch.device('cuda'):
         batch_size = 20
     else:
         batch_size = 20
-    LR = 5e-4
-    USE_VALUE_NETWORK = USE_VALUE_NETWORK
-    TEMPORAL = TEMPORAL
-    model = PGNetwork(in_dim = 2, out_dim = 2)
-    dt = T / M
+    model = PGNetwork(in_dim = 2, out_dim = 2).to(device)
     gamma = np.exp(-r * dt)
-    if USE_VALUE_NETWORK:
+    if vmodel == "vmodel":
         vmodel = ValueNetwork(2, 64).to(device)
         optimizer = optim.Adam(list(model.parameters()) + list(vmodel.parameters()), lr=LR)
     else:
+        vmodel = vmodel # None, or actor critic
         optimizer = optim.Adam(model.parameters(), lr=LR)
+
+    
     # TODO: data_load
     train_set, test_set = data_load_pg(data, 0.80)
     train_set = SimDataset(train_set)
@@ -245,33 +286,31 @@ def pg_train(TEMPORAL = False, USE_VALUE_NETWORK = False, fname = None):
         num_workers = 1,
         shuffle = True
     )
-    num_epochs = 500 # Change later. 
     for step in range(num_epochs):
         model.train()
         for item in tqdm(train_loader):
             actions, rewards, log_probs, values, ep_reward = rollout(
                 model, item, strike, dt, gamma, 
-                vmodel=vmodel if USE_VALUE_NETWORK else None, device=device)
+                vmodel=vmodel, mode = "train", device=device)
             # print(torch.mean(ep_reward))
 
             update_parameters(optimizer, model, rewards, log_probs, gamma, 
-                              values = values if USE_VALUE_NETWORK else None, 
-                              temporal = TEMPORAL, device = device)
+                              values = values if vmodel is not None else None, 
+                              temporal = temporal, device = device)
         
         test_reward = []
         model.eval()
+        # Check every 10 epochs. 
         if (step + 1) % 10 == 0:
             for item in tqdm(test_loader):
                 actions, rewards, log_probs, values, ep_reward = rollout(
                     model, item, strike, dt, gamma, 
-                    vmodel=vmodel if USE_VALUE_NETWORK else None, device=device)
+                    vmodel=vmodel, mode = "test", device=device)
                 for rew in ep_reward:
                     test_reward.append(rew.item())
             print(sum(test_reward)/len(test_reward))
             prices = np.linspace(np.min(data), np.max(data), 40)
             dtimes = np.linspace(0, 1, 6)
-            if fname is None:
-                fname = "pg_plot.png"
             prob_plot(model, prices, dtimes = dtimes, fname = fname) 
         print("Epoch {} done".format(step + 1))
         
@@ -304,6 +343,12 @@ def prob_plot(model, prices, dtimes, fname = None):
     plt.clf()
 
 if __name__ == "__main__":
-    pg_train(TEMPORAL = False, USE_VALUE_NETWORK = False, fname = "pg_vanilla.png")
-    pg_train(TEMPORAL = True, USE_VALUE_NETWORK = False, fname = "pg_temp.png")
-    pg_train(TEMPORAL = True, USE_VALUE_NETWORK = True, fname = "pg_critic.png")
+    parser = argparse.ArgumentParser(description="Running Experiments of Policy Gradient")
+    parser.add_argument('config_file')
+    args = parser.parse_args()
+    config_file = args.config_file
+    config = edict(yaml.load(open(config_file, 'r'), Loader=yaml.FullLoader))
+    pg_train(config)
+    pg_train(TEMPORAL = False, VALUE_NETWORK = None, fname = "pg_vanilla.png")
+    pg_train(TEMPORAL = True, VALUE_NETWORK = None, fname = "pg_temp.png")
+    pg_train(TEMPORAL = True, VALUE_NETWORK = "actor_critic", fname = "pg_critic.png")
