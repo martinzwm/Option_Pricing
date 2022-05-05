@@ -162,7 +162,7 @@ def rollout(model, traj, strike, dt, gamma,
     reward_style = None
     reward_list = reward_func(traj[:, :, 0], strike, reward_style)
     if vmodel == "actor_critic":
-        q_all = get_Q(traj[:, :, 0].numpy(), reward_list.numpy(), gamma)
+        q_all = get_Q(traj[:, :, 0].cpu().numpy(), reward_list.cpu().numpy(), gamma)
         q_all = torch.from_numpy(q_all).float()
         q_state = q_all[:, 0]
     
@@ -289,6 +289,7 @@ def pg_train(TEMPORAL = False, VALUE_NETWORK = False, fname = None):
     for step in range(num_epochs):
         model.train()
         for item in tqdm(train_loader):
+            item = item.to(device)
             actions, rewards, log_probs, values, ep_reward = rollout(
                 model, item, strike, dt, gamma, 
                 vmodel=vmodel, mode = "train", device=device)
@@ -303,6 +304,7 @@ def pg_train(TEMPORAL = False, VALUE_NETWORK = False, fname = None):
         # Check every 10 epochs. 
         if (step + 1) % 10 == 0:
             for item in tqdm(test_loader):
+                item = item.to(device)
                 actions, rewards, log_probs, values, ep_reward = rollout(
                     model, item, strike, dt, gamma, 
                     vmodel=vmodel, mode = "test", device=device)
