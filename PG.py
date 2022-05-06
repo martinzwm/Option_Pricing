@@ -165,7 +165,7 @@ def rollout(model, traj, strike, dt, gamma,
     reward_list = reward_func(traj[:, :, 0], strike, reward_style)
     if vmodel == "actor_critic":
         q_all = get_Q(traj[:, :, 0].cpu().numpy(), reward_list.cpu().numpy(), gamma)
-        q_all = torch.from_numpy(q_all).float()
+        q_all = torch.from_numpy(q_all).float().to(device)
         q_state = q_all[:, 0]
     
     if reward_style == "TD0":
