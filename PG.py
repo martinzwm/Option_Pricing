@@ -45,8 +45,6 @@ class PGNetwork(nn.Module):
         x = self.net(observations)
         try:
             x = self.net(observations)
-        except:
-            from IPython import embed; embed()
         return Categorical(logits = F.log_softmax(x, dim = 1))
 
 class ValueNetwork(nn.Module):
@@ -59,6 +57,7 @@ class ValueNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, 1)
         )
+        # TODO: add the Actor-Critic version (pass in the feature vector). 
 
     def forward(self, observation):
         B, L = observation.size()
