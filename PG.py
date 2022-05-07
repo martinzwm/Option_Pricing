@@ -9,6 +9,8 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.distributions import Categorical
+import matplotlib.pyplot as plt
+from transition import BrownianMotion
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import *
 from utility import SimDataset
@@ -41,6 +43,10 @@ class PGNetwork(nn.Module):
         B, N = observations.size()
         # N should really be 2, one for time and . 
         x = self.net(observations)
+        try:
+            x = self.net(observations)
+        except:
+            from IPython import embed; embed()
         return Categorical(logits = F.log_softmax(x, dim = 1))
 
 class ValueNetwork(nn.Module):
@@ -344,10 +350,34 @@ def prob_plot(model, prices, dtimes, fname = None):
     plt.savefig(fname)
     plt.clf()
 
-# def evaluate(model, vmodel = None, 
+def prob_plot(model, prices, dtimes, fname = None):
+    """
+        Args: 
+            model: PGNet (only one choice)
+            prices: a list of all the prices
+            dtimes: a fixed set of time intervals
+        Returns:
+            a plot
+    """
+    # First need to process first. 
+    model.eval()
+    L = prices.shape[0]
+    for dtime in dtimes: 
+        dtime_vec = np.repeat(dtime, L, 0)
+        state = np.stack([prices, dtime_vec], axis = 1)
+        state_tensor = torch.from_numpy(state).float()
+        dist = model(state_tensor)
+        exercise = torch.tensor([1] * L)
+        probs = torch.exp(dist.log_prob(exercise))
+        probs = probs.cpu().detach().numpy()
+        plt.plot(prices, probs, label = "dt = {:.2f}".format(dtime))
+    if fname == None:
+        fname = 'pg_prob.png'
+    plt.legend()
+    plt.savefig(fname)
+    plt.clf()
 
 if __name__ == "__main__":
-<<<<<<< HEAD
     parser.add_argument('config_file')
     args = parser.parse_args()
     config_file = args.config_file
