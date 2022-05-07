@@ -7,5 +7,6 @@ M: 50
 N: 4000
 LR: 5e-4
 temporal: False
+save_dir: 'model_vanilla'
 num_epochs: 500
 prob_fname: 'pg_vanilla.png'

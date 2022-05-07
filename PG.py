@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torch.distributions import Categorical
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import *
-from utility import SimDataset
+from utility import SimDataset, load_checkpoint, save_checkpoint
 from transition import BrownianMotion
 from LSM import AmericanOptionsLSMC
 
@@ -180,12 +180,14 @@ def rollout(model, traj, strike, dt, gamma,
             # If we've already exercised then the action no longer matters. 
             action = torch.logical_and(action, torch.logical_not(exercised))
             exercised = torch.logical_or(action, exercised)
-            if vmodel: # We'll fix this later.
-                #value = vmodel(state)
-                #values[:, T] = value
+            if vmodel == "actor_critic": # We'll fix this later.
                 if T < L - 1:
                     q_state = torch.where(exercised, q_state, q_all[:, T + 1])
                 values[:, T] = q_state
+
+            elif vmodel is not None:
+                st_act = torch.cat((state, action.view(B, 1)), axis = -1)
+                values[:, T] = vmodel(st_act)
             
             if reward_style is None:
                 if T < L - 1:
@@ -211,6 +213,9 @@ def rollout(model, traj, strike, dt, gamma,
             real_prob = cond_prob * (1 - exercised)
             ep_reward += reward_list[:, T] * real_prob * (gamma ** T)
             exercised += real_prob
+            if T == L - 1:
+                # Last minute of non-exercising. 
+                ep_reward += reward_list[:, T] * (1 - exercised) * (gamma ** T)
 
     return actions, rewards, log_probs, values, ep_reward
 
@@ -261,7 +266,7 @@ def pg_train(config):
     model = PGNetwork(in_dim = 2, out_dim = 2).to(device)
     gamma = np.exp(-r * dt)
     if vmodel == "vmodel":
-        vmodel = ValueNetwork(2, 64).to(device)
+        vmodel = ValueNetwork(3, 64).to(device)
         optimizer = optim.Adam(list(model.parameters()) + list(vmodel.parameters()), lr=LR)
     else:
         vmodel = vmodel # None, or actor critic
@@ -300,6 +305,7 @@ def pg_train(config):
         
         test_reward = []
         model.eval()
+        save_checkpoint(model, optimizer, step, config.save_dir)
         # Check every 10 epochs. 
         if (step + 1) % 10 == 0:
             for item in tqdm(test_loader):
@@ -344,11 +350,12 @@ def prob_plot(model, prices, dtimes, fname = None):
     plt.clf()
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Process config file.')
     parser.add_argument('config_file')
     args = parser.parse_args()
     config_file = args.config_file
     config = edict(yaml.load(open(config_file, 'r'), Loader=yaml.FullLoader))
     pg_train(config)
-    pg_train(TEMPORAL = False, VALUE_NETWORK = None, fname = "pg_vanilla.png")
-    pg_train(TEMPORAL = True, VALUE_NETWORK = None, fname = "pg_temp.png")
-    pg_train(TEMPORAL = True, VALUE_NETWORK = "actor_critic", fname = "pg_critic.png")
+    #pg_train(TEMPORAL = False, VALUE_NETWORK = None, fname = "pg_vanilla.png")
+    #pg_train(TEMPORAL = True, VALUE_NETWORK = None, fname = "pg_temp.png")
+    #pg_train(TEMPORAL = True, VALUE_NETWORK = "actor_critic", fname = "pg_critic.png")
