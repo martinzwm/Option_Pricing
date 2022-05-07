@@ -359,15 +359,16 @@ class PGRunner():
         print(sum(test_reward)/len(test_reward))
         prices = np.linspace(np.min(self.data), np.max(self.data), 40)
         dtimes = np.linspace(0, 1, 51)
-        prob_plot(model, prices, dtimes = dtimes, fname = self.prob_fname)
+        prob_plot(model, prices, dtimes = dtimes, end_time = self.T, fname = self.prob_fname)
         
 
-def prob_plot(model, prices, dtimes, fname = None):
+def prob_plot(model, prices, dtimes, end_time, fname = None):
     """
         Args: 
             model: PGNet (only one choice)
             prices: a list of all the prices
             dtimes: a fixed set of time intervals
+            end_time: maturity time
         Returns:
             a plot
     """
@@ -386,7 +387,7 @@ def prob_plot(model, prices, dtimes, fname = None):
         probs[i] = pr
     if fname == None:
         fname = 'pg_prob.png'
-    X, Y = np.meshgrid(prices, dtimes)
+    X, Y = np.meshgrid(prices, 1.00 - dtimes) # Here, we need to
     plt.figure()
     plt.contourf(X, Y, probs)
     plt.xlabel("Stock")
