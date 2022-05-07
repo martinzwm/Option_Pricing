@@ -41,8 +41,6 @@ class PGNetwork(nn.Module):
         B, N = observations.size()
         # N should really be 2, one for time and . 
         x = self.net(observations)
-        try:
-            x = self.net(observations)
         return Categorical(logits = F.log_softmax(x, dim = 1))
 
 class ValueNetwork(nn.Module):
@@ -317,33 +315,6 @@ def pg_train(config):
             prob_plot(model, prices, dtimes = dtimes, fname = prob_fname) 
         print("Epoch {} done".format(step + 1))
         
-
-def prob_plot(model, prices, dtimes, fname = None):
-    """
-        Args: 
-            model: PGNet (only one choice)
-            prices: a list of all the prices
-            dtimes: a fixed set of time intervals
-        Returns:
-            a plot
-    """
-    # First need to process first. 
-    model.eval()
-    L = prices.shape[0]
-    for dtime in dtimes: 
-        dtime_vec = np.repeat(dtime, L, 0)
-        state = np.stack([prices, dtime_vec], axis = 1)
-        state_tensor = torch.from_numpy(state).float()
-        dist = model(state_tensor)
-        exercise = torch.tensor([1] * L)
-        probs = torch.exp(dist.log_prob(exercise))
-        probs = probs.cpu().detach().numpy()
-        plt.plot(prices, probs, label = "dt = {:.2f}".format(dtime))
-    if fname == None:
-        fname = 'pg_prob.png'
-    plt.legend()
-    plt.savefig(fname)
-    plt.clf()
 
 def prob_plot(model, prices, dtimes, fname = None):
     """
