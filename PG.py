@@ -238,88 +238,128 @@ def data_load_pg(traj, train_test_split=0.8):
 
     return train_set, test_set
 
-def pg_train(config):
-    strike = config.strike
-    S0 = config.S0
-    sigma = config.sigma
-    r = config.r
-    T = config.T
-    M = config.M
-    N = config.N
-    transition = BrownianMotion
-    div = 0
-    LR = float(config.LR)
-    transition_model = BrownianMotion(S0, r, sigma, T, M, N)
-    data = np.transpose(transition_model.simulate())
-    dt = T / M
-    temporal = config.temporal
-    vmodel = config.vmodel if "vmodel" in config else None
-    prob_fname = config.prob_fname
-    num_epochs = config.num_epochs
-    # lsm = AmericanOptionsLSMC('put', S0, strike, T, M, r, div, sigma, N, transition)
-    torch.manual_seed(123)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    if device == torch.device('cuda'):
-        batch_size = 20
-    else:
-        batch_size = 20
-    model = PGNetwork(in_dim = 2, out_dim = 2).to(device)
-    gamma = np.exp(-r * dt)
-    if vmodel == "vmodel":
-        vmodel = ValueNetwork(3, 64).to(device)
-        optimizer = optim.Adam(list(model.parameters()) + list(vmodel.parameters()), lr=LR)
-    else:
-        vmodel = vmodel # None, or actor critic
-        optimizer = optim.Adam(model.parameters(), lr=LR)
+class PGRunner():
+    def __init__(self, config):
+        self.config = config
+        self.strike = config.strike
+        self.S0 = config.S0
+        self.sigma = config.sigma
+        self.r = config.r
+        self.T = config.T
+        self.M = config.M
+        self.N = config.N
+        self.transition = BrownianMotion
+        self.dt = self.T / self.M
+        self.gamma = np.exp(-self.r * self.dt)
+        self.temporal = config.temporal
+        self.vmodel = config.vmodel if "vmodel" in config else None
+        self.prob_fname = config.prob_fname
+        self.data = self.gen_data()
+        self.train_loader, self.test_loader = self.get_loader()
 
-    
-    # TODO: data_load
-    train_set, test_set = data_load_pg(data, 0.80)
-    train_set = SimDataset(train_set)
-    test_set = SimDataset(test_set)
 
-    train_loader = DataLoader(
-        train_set,
-        batch_size = batch_size,
-        num_workers = 1,
-        shuffle = True
-    )
-    test_loader = DataLoader(
-        test_set,
-        batch_size = batch_size,
-        num_workers = 1,
-        shuffle = True
-    )
-    for step in range(num_epochs):
-        model.train()
-        for item in tqdm(train_loader):
-            item = item.to(device)
-            actions, rewards, log_probs, values, ep_reward = rollout(
-                model, item, strike, dt, gamma, 
-                vmodel=vmodel, mode = "train", device=device)
-            # print(torch.mean(ep_reward))
+    def gen_data(self):
+        transition_model = BrownianMotion(self.S0, self.r, self.sigma, self.T, self.M, self.N)
+        data = np.transpose(transition_model.simulate())
+        return data
 
-            update_parameters(optimizer, model, rewards, log_probs, gamma, 
-                              values = values if vmodel is not None else None, 
-                              temporal = temporal, device = device)
+    def get_loader(self):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if device == torch.device('cuda'):
+            batch_size = 20
+        else:
+            batch_size = 20
+        train_set, test_set = data_load_pg(self.data, 0.80)
+        train_set = SimDataset(train_set)
+        test_set = SimDataset(test_set)
+
+        train_loader = DataLoader(
+            train_set,
+            batch_size = batch_size,
+            num_workers = 1,
+            shuffle = True
+        )
+        test_loader = DataLoader(
+            test_set,
+            batch_size = batch_size,
+            num_workers = 1,
+            shuffle = True
+        )
+        return train_loader, test_loader
+
+    def train(self):
+        config = self.config
+        num_epochs = config.num_epochs
+        LR = float(config.LR)
+        torch.manual_seed(123)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = PGNetwork(in_dim = 2, out_dim = 2).to(device)
+
+        if self.vmodel == "vmodel":
+            vmodel = ValueNetwork(3, 64).to(device)
+            optimizer = optim.Adam(list(model.parameters()) + list(vmodel.parameters()), lr=LR)
+        else:
+            vmodel = self.vmodel # None, or actor critic
+            optimizer = optim.Adam(model.parameters(), lr=LR)
+
         
-        test_reward = []
-        model.eval()
-        save_checkpoint(model, optimizer, step, config.save_dir)
-        # Check every 10 epochs. 
-        if (step + 1) % 10 == 0:
-            for item in tqdm(test_loader):
+        for step in range(num_epochs):
+            model.train()
+            for item in tqdm(self.train_loader):
                 item = item.to(device)
                 actions, rewards, log_probs, values, ep_reward = rollout(
-                    model, item, strike, dt, gamma, 
-                    vmodel=vmodel, mode = "test", device=device)
-                for rew in ep_reward:
-                    test_reward.append(rew.item())
-            print(sum(test_reward)/len(test_reward))
-            prices = np.linspace(np.min(data), np.max(data), 40)
-            dtimes = np.linspace(0, 1, 6)
-            prob_plot(model, prices, dtimes = dtimes, fname = prob_fname) 
-        print("Epoch {} done".format(step + 1))
+                    model, item, self.strike, self.dt, self.gamma, 
+                    vmodel=vmodel, mode = "train", device=device)
+                # print(torch.mean(ep_reward))
+
+                update_parameters(optimizer, model, rewards, log_probs, self.gamma, 
+                                  values = values if vmodel is not None else None, 
+                                  temporal = self.temporal, device = device)
+            
+            test_reward = []
+            model.eval()
+            save_checkpoint(model, optimizer, step, config.save_dir)
+            # Check every 10 epochs. 
+            if (step + 1) % 10 == 0:
+                for item in tqdm(self.test_loader):
+                    item = item.to(device)
+                    actions, rewards, log_probs, values, ep_reward = rollout(
+                        model, item, self.strike, self.dt, self.gamma, 
+                        vmodel=vmodel, mode = "test", device=device)
+                    for rew in ep_reward:
+                        test_reward.append(rew.item())
+                print(sum(test_reward)/len(test_reward))
+                prices = np.linspace(np.min(data), np.max(data), 40)
+                dtimes = np.linspace(0, 1, 51)
+                prob_plot(model, prices, dtimes = dtimes, fname = self.prob_fname) 
+            print("Epoch {} done".format(step + 1))
+
+    def test(self):
+        config = self.config
+        torch.manual_seed(123)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = PGNetwork(in_dim = 2, out_dim = 2).to(device)
+
+        if self.vmodel == "vmodel":
+            vmodel = ValueNetwork(3, 64).to(device)
+        else:
+            vmodel = self.vmodel # None, or actor critic
+        save_step = config.save_step if "save_step" in config else "max"
+        load_dir = config.load_dir
+        load_checkpoint(model, optimizer = None, step = save_step, save_dir = load_dir)
+        test_reward = []
+        model.eval()
+        for item in tqdm(self.test_loader):
+            item = item.to(device)
+            actions, rewards, log_probs, values, ep_reward = rollout(
+                model, item, self.strike, self.dt, self.gamma,
+                vmodel=vmodel, mode = "test", device=device)
+            for rew in ep_reward:
+                test_reward.append(rew.item())
+        print(sum(test_reward)/len(test_reward))
+        prices = np.linspace(np.min(self.data), np.max(self.data), 40)
+        dtimes = np.linspace(0, 1, 51)
+        prob_plot(model, prices, dtimes = dtimes, fname = self.prob_fname)
         
 
 def prob_plot(model, prices, dtimes, fname = None):
@@ -334,18 +374,25 @@ def prob_plot(model, prices, dtimes, fname = None):
     # First need to process first. 
     model.eval()
     L = prices.shape[0]
-    for dtime in dtimes: 
+    T = dtimes.shape[0]
+    probs = np.empty((T, L))
+    for (i, dtime) in enumerate(dtimes): 
         dtime_vec = np.repeat(dtime, L, 0)
         state = np.stack([prices, dtime_vec], axis = 1)
         state_tensor = torch.from_numpy(state).float()
         dist = model(state_tensor)
         exercise = torch.tensor([1] * L)
-        probs = torch.exp(dist.log_prob(exercise))
-        probs = probs.cpu().detach().numpy()
-        plt.plot(prices, probs, label = "dt = {:.2f}".format(dtime))
+        pr = torch.exp(dist.log_prob(exercise)).cpu().detach().numpy()
+        probs[i] = pr
     if fname == None:
         fname = 'pg_prob.png'
-    plt.legend()
+    X, Y = np.meshgrid(prices, dtimes)
+    plt.figure()
+    plt.contourf(X, Y, probs)
+    plt.xlabel("Stock")
+    plt.ylabel("Time")
+    plt.set_cmap('jet');
+    plt.colorbar()
     plt.savefig(fname)
     plt.clf()
 
@@ -355,7 +402,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
     config_file = args.config_file
     config = edict(yaml.load(open(config_file, 'r'), Loader=yaml.FullLoader))
-    pg_train(config)
-    #pg_train(TEMPORAL = False, VALUE_NETWORK = None, fname = "pg_vanilla.png")
-    #pg_train(TEMPORAL = True, VALUE_NETWORK = None, fname = "pg_temp.png")
-    #pg_train(TEMPORAL = True, VALUE_NETWORK = "actor_critic", fname = "pg_critic.png")
+    runner = PGRunner(config)
+    runner.test() # Feel free to change to train, if needed. 

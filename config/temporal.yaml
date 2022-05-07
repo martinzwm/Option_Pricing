@@ -8,5 +8,6 @@ N: 4000
 LR: 5e-4
 temporal: True
 save_dir: 'model_temp'
+load_dir: 'model_temp'
 num_epochs: 500
 prob_fname: 'pg_temporal.png'
