@@ -78,12 +78,12 @@ def decision_plot(model, fig_name):
 def visualize():
     # LSM
     lsm = AmericanOptionsLSMC(option_type='put', S0=36, strike=40, T=1, M=50,
-                                    r=0.06, div=0, sigma=0.2, N=100000, transition=BrownianMotion)
+                                    r=0.06, div=0, sigma=0.2, N=100000, transition=BrownianMotion, stochastic_volatility=True)
     decision_plot(lsm, fig_name="Plots/LSM_decision.png")
 
     # Optimal
     optimal = Optimal(option_type='put', S0=36, strike=40, T=1, M=50,
-                                    r=0.06, div=0, sigma=0.2, N=100000, transition=BrownianMotion)
+                                    r=0.06, div=0, sigma=0.2, N=100000, transition=BrownianMotion, stochastic_volatility=True)
     decision_plot(optimal, fig_name="Plots/optimal_decision.png")
 
 if __name__ == "__main__":

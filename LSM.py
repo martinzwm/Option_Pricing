@@ -22,7 +22,7 @@ class AmericanOptionsLSMC(object):
     4.4731177017712209
     """
 
-    def __init__(self, option_type, S0, strike, T, M, r, div, sigma, N, transition):
+    def __init__(self, option_type, S0, strike, T, M, r, div, sigma, N, transition, stochastic_volatility=False):
         try:
             self.option_type = option_type
             assert isinstance(option_type, str)
@@ -40,7 +40,7 @@ class AmericanOptionsLSMC(object):
             self.sigma = float(sigma)
             assert N > 0
             self.N = int(N)
-            self.transition = transition(S0, r, sigma, T, M, N)
+            self.transition = transition(S0, r, sigma, T, M, N, stochastic_volatility)
         except ValueError:
             print('Error passing Options parameters')
 
