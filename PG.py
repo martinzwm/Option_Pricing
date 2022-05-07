@@ -9,8 +9,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.distributions import Categorical
-import matplotlib.pyplot as plt
-from transition import BrownianMotion
 from torch.utils.data import Dataset, DataLoader
 from torch.optim import *
 from utility import SimDataset
@@ -57,7 +55,6 @@ class ValueNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_dim, 1)
         )
-        # TODO: add the Actor-Critic version (pass in the feature vector). 
 
     def forward(self, observation):
         B, L = observation.size()
@@ -171,7 +168,6 @@ def rollout(model, traj, strike, dt, gamma,
         q_all = torch.from_numpy(q_all).float()
         q_state = q_all[:, 0]
     
-    # TD0 part can ignore, for now. 
     if reward_style == "TD0":
         base_val = max(strike - traj[0, 0, 0].item(), 0)
         ep_reward.fill_(base_val)
