@@ -1,4 +1,6 @@
 import numpy as np
+import sys
+import os
 import copy
 import matplotlib.pyplot as plt
 from transition import BrownianMotion
@@ -29,13 +31,21 @@ def baseline_custom(prices, state, strike, goal, N, ex_action_set):
     T, N = prices.shape
     val = 0
     for t in range(T):
+        if np.sum(state) == 0:
+            continue
         prices_filtered = prices[t, state]
-        if np.sum(state) > 0 and min(prices_filtered) < goal:
+        best_price = min(prices_filtered)
+        if np.sum(state) > 0 and best_price < goal:
             act = ex_action_set[state][np.argmin(prices_filtered)]
             state[act] = 0
             val += max(0, strike - prices[t, act])
         else:
             act = N
+    # Here we have unsold stocks. 
+    if np.sum(state) > 0:
+        zer = np.zeros_like(prices[-1, state])
+        extra = np.maximum(zer, strike - prices[-1, state])
+        val += np.sum(extra)
     return val
 
 class Lookahead():
@@ -77,26 +87,29 @@ class Lookahead():
 
     def baseline(self):
         
-        cur_val = self.val
+        start_val = 0
+        start_t = 0
         all_vals = np.empty(num_repeats)
         prices = np.hsplit(self.brownian.simulate(self.seed), num_repeats)
         for (i, prices_i) in enumerate(prices):
-            self.state = np.ones((self.num_stocks)).astype(np.bool_)
-            self.val = cur_val
-            for t in range(self.t, self.M+1):
-                price_ftr = prices_i[t, self.state]
+            state = np.ones((self.num_stocks)).astype(np.bool_)
+            val = start_val
+            for t in range(start_t, self.M+1):
+                if np.sum(state) == 0:
+                    break
+                price_ftr = prices_i[t, state] # filtered price
                 best_price = min(price_ftr)
-                if np.sum(self.state) > 0 and best_price < self.goal:
-                    action = self.ex_action_set[self.state][np.argmin(price_ftr)]
-                    self.state[action] = 0
-                    self.val += max(0, self.strike - best_price) * (self.gamma ** t)
+                if np.sum(state) > 0 and best_price < self.goal:
+                    action = self.ex_action_set[state][np.argmin(price_ftr)]
+                    state[action] = 0
+                    val += max(0, self.strike - best_price) * (self.gamma ** t)
                 else:
                     action = self.num_stocks
             # Finally, anything that's not actioned will be exercised as time ends. 
-            prices = prices_i[-1, self.state]
+            prices = prices_i[-1, state]
             extra = np.maximum(self.strike - prices, np.zeros_like(prices)) * (self.gamma ** self.M)
-            self.val += np.sum(extra)
-            all_vals[i] = self.val / self.num_stocks
+            val += np.sum(extra)
+            all_vals[i] = val / self.num_stocks
         return np.mean(all_vals)
             
     def lookahead_helper(self, t, prices, state, num_steps):
@@ -125,21 +138,24 @@ class Lookahead():
                 if act < self.num_stocks:
                     cur_state[act] = 0
                     cur_val += max(0, self.strike - prices[t + i - 1, act])
-            est_val = []
-            for path in all_paths:
-                path = self.simulate(prices[t + num_steps - 1], t_left)
-                val_add = baseline_custom(path, cur_state.copy(), self.strike, 
-                                          self.goal, self.num_stocks, self.ex_action_set)
-                new_val = cur_val + val_add
-                est_val.append(new_val)
-            val_map[tuple(tup)] = sum(est_val) / len(est_val)
+            if t_left > 0:
+                est_val = []
+                for path in all_paths:
+                    path = self.simulate(prices[t + num_steps - 1], t_left)
+                    val_add = baseline_custom(path, cur_state.copy(), self.strike, 
+                                              self.goal, self.num_stocks, self.ex_action_set)
+                    new_val = cur_val + val_add
+                    est_val.append(new_val)
+                val_map[tuple(tup)] = sum(est_val) / len(est_val)
+            else:
+                val_map[tuple(tup)] = cur_val
         idx = max(val_map, key=val_map.get)
         return idx
 
     def lookahead(self, num_steps):
         all_vals = np.empty(num_repeats)
         prices = np.hsplit(self.brownian.simulate(self.seed), num_repeats)
-        for (ind, prices_i) in tqdm(enumerate(prices)):
+        for (ind, prices_i) in tqdm(enumerate(prices), total = len(prices)):
             val = 0
             t = 0
             state = np.ones((self.num_stocks)).astype(np.bool_) # Assume start from 0. 
@@ -154,18 +170,47 @@ class Lookahead():
             pr_left = prices_i[-1, state]
             extra = np.maximum(self.strike - pr_left, np.zeros_like(pr_left)) * (self.gamma ** self.M)
             val += np.sum(extra)
+            # print(val / self.num_stocks)
             all_vals[ind] = val / self.num_stocks
         return np.mean(all_vals)
 
   
-def simulate_baseline(S0, strike, T, M, r, sigma, num_stocks, num_repeats):
-    goals = np.linspace(30.00, 40.00, 101)
-    val = np.zeros_like(goals)
-    for (i, goal) in tqdm(enumerate(goals)):
+def simulate_baseline(S0, strike, T, M, r, sigma, num_stocks_list, num_repeats):
+    goals = np.linspace(S0 - 10.00, strike, 51)
+    for num_stocks in num_stocks_list:
+        val = np.zeros_like(goals)
+        for (i, goal) in tqdm(enumerate(goals), total = goals.shape[0]):
+            la = Lookahead(S0, strike, r, sigma, T, M, num_stocks, num_repeats, goal)
+            val[i] = la.baseline()
+        plt.plot(goals, val, label = "N = {}".format(num_stocks))
+    plt.legend()
+    plt.savefig("la_bl.png")
+    plt.clf()
+
+def simulate_la(S0, strike, T, M, r, sigma, num_stocks_list, num_repeats):
+    goals = np.linspace(S0 - 10.00, strike, 51)
+    for num_stocks in num_stocks_list:
+        val = np.zeros_like(goals)
+        for (i, goal) in tqdm(enumerate(goals), total = goals.shape[0]):
+            la = Lookahead(S0, strike, r, sigma, T, M, num_stocks, num_repeats, goal)
+            val[i] = la.lookahead(1)
+        plt.plot(goals, val, label = "N = {}".format(num_stocks))
+    plt.legend()
+    plt.savefig("la_one_alt.png")
+    plt.clf()
+
+def simulate_comp(S0, strike, T, M, r, sigma, num_stocks, num_repeats):   
+    goals = np.linspace(0.5 * S0, strike + 10, 51)
+    val_b = np.zeros_like(goals)
+    val_l = np.zeros_like(goals)
+    for (i, goal) in enumerate(goals):
         la = Lookahead(S0, strike, r, sigma, T, M, num_stocks, num_repeats, goal)
-        val[i] = la.baseline()
-    plt.plot(goals, val)
-    plt.savefig("la.png")
+        val_b[i] = la.baseline()
+        val_l[i] = la.lookahead(1)
+    plt.plot(goals, val_b, label = "Baseline")
+    plt.plot(goals, val_l, label = "Lookahead")
+    plt.legend()
+    plt.savefig("la_{}".format(num_stocks))
     plt.clf()
 
 if __name__ == "__main__":
@@ -174,12 +219,9 @@ if __name__ == "__main__":
     strike = 40.0
     T = 1
     M = 50
-    num_stocks = 20
+    num_stocks = int(sys.argv[1])
     num_repeats = 10
     r = 0.06
     div = 0.00
     sigma = 0.2
-    goal = 32.0
-    la = Lookahead(S0, strike, r, sigma, T, M, num_stocks, num_repeats, goal)
-    print(la.lookahead(2))
-    
+    simulate_comp(S0, strike, T, M, r, sigma, num_stocks, num_repeats)
