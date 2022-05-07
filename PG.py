@@ -118,6 +118,7 @@ def update_parameters(optimizer, model, rewards, log_probs, gamma,
         loss = policy_loss + value_loss
     else:
         loss = policy_loss
+    # loss = Variable(loss, requires_grad = True)
     loss.backward()
     optimizer.step()
 
@@ -343,8 +344,10 @@ def prob_plot(model, prices, dtimes, fname = None):
     plt.savefig(fname)
     plt.clf()
 
+# def evaluate(model, vmodel = None, 
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Running Experiments of Policy Gradient")
+<<<<<<< HEAD
     parser.add_argument('config_file')
     args = parser.parse_args()
     config_file = args.config_file
