@@ -64,27 +64,35 @@ def decision_plot(model, fig_name):
     
     # Plotting
     x = bins[1,:] # stock price
-    y = np.linspace(0, 1, 51) # time
+    y = np.linspace(0, 365, 51) # time
     X, Y = np.meshgrid(x, y)
     Z = probs
     plt.figure()
     plt.contourf(X, Y, Z)
     # axs.imshow(interpolation='bilinear')
-    plt.xlabel("Stock"); plt.ylabel("Time")
+    plt.xlabel("Stock [$]"); plt.ylabel("Time [day]")
     plt.set_cmap('jet'); plt.colorbar()
     plt.savefig(fig_name)
 
 
 def visualize():
+<<<<<<< Updated upstream
     # LSM
     lsm = AmericanOptionsLSMC(option_type='put', S0=36, strike=40, T=1, M=50,
                                     r=0.06, div=0, sigma=0.2, N=100000, transition=BrownianMotion, stochastic_volatility=True)
     decision_plot(lsm, fig_name="Plots/LSM_decision.png")
+=======
+    # # LSM
+    # lsm = AmericanOptionsLSMC(option_type='put', S0=36, strike=40, T=1, M=50,
+    #                                 r=0.06, div=0, sigma=0.2, N=10000, transition=BrownianMotion)
+    # decision_plot(lsm, fig_name="Plots/test.png")
+>>>>>>> Stashed changes
 
     # Optimal
     optimal = Optimal(option_type='put', S0=36, strike=40, T=1, M=50,
                                     r=0.06, div=0, sigma=0.2, N=100000, transition=BrownianMotion, stochastic_volatility=True)
     decision_plot(optimal, fig_name="Plots/optimal_decision.png")
+
 
 if __name__ == "__main__":
     visualize()
