@@ -22,7 +22,7 @@ class AmericanOptionsLSMC(object):
     4.4731177017712209
     """
 
-    def __init__(self, option_type, S0, strike, T, M, r, div, sigma, N, transition, stochastic_volatility=False):
+    def __init__(self, option_type, S0, strike, T, M, r, div, sigma, N, transition, stochastic_volatility=False, seed = 123):
         try:
             self.option_type = option_type
             assert isinstance(option_type, str)
@@ -41,6 +41,7 @@ class AmericanOptionsLSMC(object):
             assert N > 0
             self.N = int(N)
             self.transition = transition(S0, r, sigma, T, M, N, stochastic_volatility)
+            self.seed = seed
         except ValueError:
             print('Error passing Options parameters')
 
@@ -52,13 +53,13 @@ class AmericanOptionsLSMC(object):
 
         self.time_unit = self.T / float(self.M)
         self.discount = np.exp(-self.r * self.time_unit)
-        self.discount = 0.99
+        # self.discount = 0.99
 
 
     @property
-    def MCprice_matrix(self, seed=123):
+    def MCprice_matrix(self):
         """ Returns MC price matrix rows: time columns: price-path simulation """
-        MCprice_matrix = self.transition.simulate(seed)
+        MCprice_matrix = self.transition.simulate(self.seed)
         return MCprice_matrix
 
     @property
