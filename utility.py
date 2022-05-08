@@ -147,6 +147,8 @@ def load_checkpoint(net, optimizer=None, step='max', save_dir='checkpoints'):
     os.makedirs(save_dir, exist_ok=True)
 
     checkpoints = [x for x in os.listdir(save_dir) if not x.startswith('events')]
+    # Get rid of DS Store
+    checkpoints = list(filter(lambda x: "DS_Store" not in x, checkpoints))
     if step == 'max':
         step = 0
         if checkpoints:
