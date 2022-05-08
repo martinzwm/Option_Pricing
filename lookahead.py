@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import sys
 import os
 import copy
@@ -200,17 +201,21 @@ def simulate_la(S0, strike, T, M, r, sigma, num_stocks_list, num_repeats):
     plt.clf()
 
 def simulate_comp(S0, strike, T, M, r, sigma, num_stocks, num_repeats):   
-    goals = np.linspace(0.5 * S0, strike + 10, 51)
+    goals = np.linspace(0.5 * S0, strike + 5, 51)
     val_b = np.zeros_like(goals)
     val_l = np.zeros_like(goals)
     for (i, goal) in enumerate(goals):
         la = Lookahead(S0, strike, r, sigma, T, M, num_stocks, num_repeats, goal)
         val_b[i] = la.baseline()
         val_l[i] = la.lookahead(1)
+    df_b = pd.DataFrame(val_b[np.newaxis, :], columns = goals)
+    df_l = pd.DataFrame(val_l[np.newaxis, :], columns = goals)   
+    df_b.to_csv("lab_{}.csv".format(num_stocks))
+    df_l.to_csv("lal_{}.csv".format(num_stocks))
     plt.plot(goals, val_b, label = "Baseline")
     plt.plot(goals, val_l, label = "Lookahead")
     plt.legend()
-    plt.savefig("la_{}".format(num_stocks))
+    plt.savefig("lad_{}.png".format(num_stocks))
     plt.clf()
 
 if __name__ == "__main__":
@@ -220,7 +225,7 @@ if __name__ == "__main__":
     T = 1
     M = 50
     num_stocks = int(sys.argv[1])
-    num_repeats = 10
+    num_repeats = 100
     r = 0.06
     div = 0.00
     sigma = 0.2
