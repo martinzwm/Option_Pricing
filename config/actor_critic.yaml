@@ -12,3 +12,4 @@ save_dir: 'model_ac'
 load_dir: 'model_ac'
 num_epochs: 500
 prob_fname: 'pg_ac.png'
+csv_fname: 'pg_ac.csv'

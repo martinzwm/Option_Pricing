@@ -11,3 +11,4 @@ save_dir: 'model_vanilla'
 load_dir: 'model_vanilla'
 num_epochs: 500
 prob_fname: 'pg_vanilla.png'
+csv_fname: 'pg_vanilla.csv'

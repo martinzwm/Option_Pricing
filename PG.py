@@ -3,6 +3,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import yaml
 import argparse
+import pandas as pd
 from easydict import EasyDict as edict
 import torch
 import torch.nn as nn
@@ -357,12 +358,15 @@ class PGRunner():
             for rew in ep_reward:
                 test_reward.append(rew.item())
         print(sum(test_reward)/len(test_reward))
-        prices = np.linspace(np.min(self.data), np.max(self.data), 40)
+        dtime_min = int(np.min(self.data))
+        dtime_max = int(np.max(self.data))+ 1
+        prices = np.arange(dtime_min, dtime_max)
         dtimes = np.linspace(0, 1, 51)
-        prob_plot(model, prices, dtimes = dtimes, end_time = self.T, fname = self.prob_fname)
+        prob_plot(model, prices, dtimes = dtimes, end_time = self.T, fname = self.prob_fname, 
+                 csv_fname = config.csv_fname)
         
 
-def prob_plot(model, prices, dtimes, end_time, fname = None):
+def prob_plot(model, prices, dtimes, end_time, fname = None, csv_fname = None):
     """
         Args: 
             model: PGNet (only one choice)
@@ -387,6 +391,12 @@ def prob_plot(model, prices, dtimes, end_time, fname = None):
         probs[i] = pr
     if fname == None:
         fname = 'pg_prob.png'
+    if csv_fname == "None":
+        csv_fname = 'pg_prob.csv'
+    df = pd.DataFrame(probs, columns = prices)
+    df['Time'] = 1.00 - dtimes
+    df.to_csv(csv_fname)
+    """
     X, Y = np.meshgrid(prices, 1.00 - dtimes) # Here, we need to
     plt.figure()
     plt.contourf(X, Y, probs)
@@ -396,6 +406,7 @@ def prob_plot(model, prices, dtimes, end_time, fname = None):
     plt.colorbar()
     plt.savefig(fname)
     plt.clf()
+    """
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process config file.')
