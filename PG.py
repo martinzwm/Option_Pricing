@@ -330,9 +330,9 @@ class PGRunner():
                     for rew in ep_reward:
                         test_reward.append(rew.item())
                 print(sum(test_reward)/len(test_reward))
-                prices = np.linspace(np.min(data), np.max(data), 40)
+                prices = np.linspace(np.min(self.data), np.max(self.data), 40)
                 dtimes = np.linspace(0, 1, 51)
-                prob_plot(model, prices, dtimes = dtimes, fname = self.prob_fname) 
+                # prob_plot(model, prices, dtimes = dtimes, fname = self.prob_fname) 
             print("Epoch {} done".format(step + 1))
 
     def test(self):
@@ -415,4 +415,4 @@ if __name__ == "__main__":
     config_file = args.config_file
     config = edict(yaml.load(open(config_file, 'r'), Loader=yaml.FullLoader))
     runner = PGRunner(config)
-    runner.test() # Feel free to change to train, if needed. 
+    runner.train() # Feel free to change to train, if needed. 
