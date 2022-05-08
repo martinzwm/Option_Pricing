@@ -5,10 +5,10 @@ r: 0.06
 T: 1
 M: 50
 N: 4000
-LR: 5e-4
+LR: 5e-5
 temporal: False
-save_dir: 'model_vanilla'
-load_dir: 'model_vanilla'
+save_dir: 'model_vanilla2'
+load_dir: 'model_vanilla2'
 num_epochs: 500
-prob_fname: 'pg_vanilla.png'
-csv_fname: 'pg_vanilla.csv'
+prob_fname: 'pg_vanilla2.png'
+csv_fname: 'pg_vanilla2.csv'

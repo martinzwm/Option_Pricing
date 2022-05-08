@@ -5,9 +5,9 @@ r: 0.06
 T: 1
 M: 50
 N: 4000
-LR: 5e-4
+LR: 5e-5
 temporal: True
-save_dir: 'model_temp'
-load_dir: 'model_temp'
+save_dir: 'model_temp2'
+load_dir: 'model_temp2'
 num_epochs: 500
-prob_fname: 'pg_temporal.png'
+prob_fname: 'pg_temporal2.png'

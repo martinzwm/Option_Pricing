@@ -5,11 +5,11 @@ r: 0.06
 T: 1
 M: 50
 N: 4000
-LR: 5e-4
+LR: 5e-5
 temporal: True
 vmodel: 'actor_critic'
-save_dir: 'model_ac'
-load_dir: 'model_ac'
+save_dir: 'model_ac2'
+load_dir: 'model_ac2'
 num_epochs: 500
-prob_fname: 'pg_ac.png'
-csv_fname: 'pg_ac.csv'
+prob_fname: 'pg_ac2.png'
+csv_fname: 'pg_ac2.csv'

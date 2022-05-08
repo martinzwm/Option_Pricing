@@ -5,11 +5,11 @@ r: 0.06
 T: 1
 M: 50
 N: 4000
-LR: 5e-4
+LR: 5e-5
 temporal: True
 vmodel: 'vmodel'
-save_dir: 'model_baseline'
-load_dir: 'model_baseline'
+save_dir: 'model_baseline2'
+load_dir: 'model_baseline2'
 num_epochs: 500
-prob_fname: 'pg_bl.png'
-csv_fname: 'pg_bl.csv'
+prob_fname: 'pg_bl2.png'
+csv_fname: 'pg_bl2.csv'
