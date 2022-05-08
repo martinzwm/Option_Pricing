@@ -288,6 +288,29 @@ class PGRunner():
         )
         return train_loader, test_loader
 
+    # The previous test loader during training is more like validation. 
+    # But here, we want to check if it's best. 
+    def gen_loader_test(self):
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        N_test = 100000
+        transition_model = BrownianMotion(self.S0, self.r, self.sigma, self.T, self.M, N_test)
+        data = np.transpose(transition_model.simulate(seed = 2077)) 
+        if device == torch.device('cuda'):
+            batch_size = 50
+        else:
+            batch_size = 200
+        train_set, test_set = data_load_pg(data, 0.00)
+        test_set = SimDataset(test_set)
+        test_loader = DataLoader(
+            test_set,
+            batch_size = batch_size,
+            num_workers = 1,
+            shuffle = True
+        )
+        return test_loader
+
+
+
     def train(self):
         config = self.config
         num_epochs = config.num_epochs
@@ -350,14 +373,20 @@ class PGRunner():
         load_checkpoint(model, optimizer = None, step = save_step, save_dir = load_dir)
         test_reward = []
         model.eval()
-        for item in tqdm(self.test_loader):
+        new_test_loader = self.gen_loader_test()
+        for item in tqdm(new_test_loader):
             item = item.to(device)
             actions, rewards, log_probs, values, ep_reward = rollout(
                 model, item, self.strike, self.dt, self.gamma,
                 vmodel=vmodel, mode = "test", device=device)
             for rew in ep_reward:
                 test_reward.append(rew.item())
-        print(sum(test_reward)/len(test_reward))
+        test_reward = np.array(test_reward)
+        import scipy.stats as st
+        np.save("returns.npy", test_reward)
+        print(np.mean(test_reward))
+        print(st.t.interval(0.95, test_reward.shape[0] - 1, 
+                            loc=np.mean(test_reward), scale=st.sem(test_reward)))
         dtime_min = int(np.min(self.data))
         dtime_max = int(np.max(self.data))+ 1
         prices = np.arange(dtime_min, dtime_max)
@@ -396,7 +425,7 @@ def prob_plot(model, prices, dtimes, end_time, fname = None, csv_fname = None):
     df = pd.DataFrame(probs, columns = prices)
     df['Time'] = 1.00 - dtimes
     df.to_csv(csv_fname)
-    """
+    
     X, Y = np.meshgrid(prices, 1.00 - dtimes) # Here, we need to
     plt.figure()
     plt.contourf(X, Y, probs)
@@ -406,7 +435,7 @@ def prob_plot(model, prices, dtimes, end_time, fname = None, csv_fname = None):
     plt.colorbar()
     plt.savefig(fname)
     plt.clf()
-    """
+    
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Process config file.')
@@ -415,4 +444,4 @@ if __name__ == "__main__":
     config_file = args.config_file
     config = edict(yaml.load(open(config_file, 'r'), Loader=yaml.FullLoader))
     runner = PGRunner(config)
-    runner.train() # Feel free to change to train, if needed. 
+    runner.test() # Feel free to change to train, if needed. 
