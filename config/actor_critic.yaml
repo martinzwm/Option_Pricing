@@ -1,0 +1,15 @@
+strike: 40
+S0: 36
+sigma: 0.2
+r: 0.06
+T: 1
+M: 50
+N: 4000
+LR: 5e-4
+temporal: True
+vmodel: 'actor_critic'
+save_dir: 'model_ac'
+load_dir: 'model_ac'
+num_epochs: 500
+prob_fname: 'pg_ac.png'
+csv_fname: 'pg_ac.csv'
